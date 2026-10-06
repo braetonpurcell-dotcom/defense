@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Icon maker</title>
+  <style>
+    body { background: #333; color: #eee; font: 14px system-ui; padding: 16px; }
+    canvas { width: 256px; image-rendering: pixelated; border: 1px solid #555; }
+  </style>
+</head>
+<body>
+  <p>
+    32×32 app icon drawn from the House sprite. <code>window.iconBase64</code> holds the PNG;
+    <code>tools/make-icons.ps1</code> scales it up to the 192 and 512 icons.
+  </p>
+  <script type="module">
+    import { SPRITES, grassRows } from '../js/art.js';
+    import { rowsToCanvas } from '../js/gfx.js';
+
+    const c = document.createElement('canvas');
+    c.width = c.height = 32;
+    const ctx = c.getContext('2d');
+    const grass = rowsToCanvas(grassRows(0));
+    for (const [x, y] of [[0, 0], [24, 0], [0, 24], [24, 24]]) ctx.drawImage(grass, x, y);
+    ctx.drawImage(rowsToCanvas(SPRITES.house), 4, 5);
+    document.body.append(c);
+    window.iconBase64 = c.toDataURL('image/png').split(',')[1];
+  </script>
+</body>
+</html>
