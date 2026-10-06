@@ -6,6 +6,10 @@ A phone game: build your home base, then hold off 10 waves of monsters, picking 
 See [DESIGN.md](DESIGN.md) for the game plan.
 
 ## Play
+**On this computer:** double-click **`Play Defense.cmd`**. It opens the game in your browser.
+Keep its window open while you play; close it when you're done.
+
+**Online (optional, later):**
 - **Live:** `https://<user>.github.io/defense/` (the `main` branch)
 - **Preview:** `https://<user>.github.io/defense/preview/` (the latest draft branch)
 

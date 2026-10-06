@@ -1,6 +1,7 @@
 # Local test server: serves the game at http://localhost:8080/
-# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File tools/serve.ps1
-param([int]$Port = 8080)
+# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File tools/serve.ps1 [-Open]
+# -Open also opens the game in your browser.
+param([int]$Port = 8080, [switch]$Open)
 
 $root = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $mime = @{
@@ -16,8 +17,18 @@ $mime = @{
 
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
-$listener.Start()
-Write-Host "Serving $root at http://localhost:$Port/"
+$url = "http://localhost:$Port/"
+try {
+  $listener.Start()
+} catch {
+  # Port already in use: the game is most likely already being served, so just open it.
+  Write-Host "Port $Port is busy - opening the game that's already running."
+  if ($Open) { Start-Process $url }
+  exit
+}
+Write-Host "Serving $root at $url"
+Write-Host 'Leave this window open while you play. Close it to stop the game server.'
+if ($Open) { Start-Process $url }
 
 while ($listener.IsListening) {
   $ctx = $listener.GetContext()
