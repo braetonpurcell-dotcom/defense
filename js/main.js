@@ -1099,6 +1099,7 @@ function layoutUI() {
   const tx = Math.round(UW / 2 - 55), ty = Math.round(UH / 2);
   buttons.titlePlay = { x: tx, y: ty + 4, w: 110, h: 24, label: 'PLAY', primary: true };
   buttons.titleRuns = { x: tx, y: ty + 34, w: 110, h: 20, label: 'TOP RUNS' };
+  buttons.titleInstall = { x: tx, y: ty + 60, w: 110, h: 20, label: 'INSTALL APP' };
 }
 
 function resize() {
@@ -1931,6 +1932,7 @@ function onTap(sx, sy) {
   if (phase === 'title') {
     if (inRect(p, buttons.titlePlay)) { phase = 'home'; homeView(); }
     else if (inRect(p, buttons.titleRuns)) runsOpen = true;
+    else if (installPrompt && inRect(p, buttons.titleInstall)) { installPrompt.prompt(); installPrompt = null; }
     return;
   }
   if (phase === 'end') {
@@ -2947,6 +2949,7 @@ function drawTitle(time) {
   centeredText(run.wave > 0 ? `YOUR RUN: WAVE ${run.wave}` : `LIFE ${game.records.lives}`, y0 + 56, PAL.l);
   drawButton(buttons.titlePlay, run.wave > 0 ? 'CONTINUE' : 'NEW RUN', 'primary');
   drawButton(buttons.titleRuns);
+  if (installPrompt) drawButton(buttons.titleInstall, 'INSTALL APP', 'good');
   centeredText('IF ONE ZOMBIE GETS THROUGH, IT IS OVER', UH - BAR_H + 16, PAL.s);
 }
 
@@ -3098,6 +3101,10 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) saveG
 // Offline copy of the game (sw.js). When a new version takes over: reload on the home screen, where there's
 // nothing to lose; mid-game, say so and reload once the run ends.
 let updateReady = false;
+// Chrome's 'install this app' prompt: kept so the home screen can offer an INSTALL APP button.
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
+window.addEventListener('appinstalled', () => { installPrompt = null; });
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('./sw.js').then((reg) => {
     // Phones keep the app open for days: look for a new version whenever it comes back to the front.
