@@ -63,7 +63,11 @@ playing, or a strategy bot that designs a base.
 **Rough numbers (do-nothing base, smoke test only):** wave 1 pays about 56G, wave 5 about 276G. An idle base
 hits the 1000G House cap by about wave 5 and dies around wave 5–7.
 
-**Next up (owner):** "once finish tidying up i want to upload this to github so i can play on my phone."
+**On GitHub (2026-10-06):** public repo https://github.com/braetonpurcell-dotcom/defense; phone link
+https://braetonpurcell-dotcom.github.io/defense/ (GitHub Pages from the gh-pages branch, built by `tools/publish.ps1`).
+To republish: commit, merge to main, push, then run publish.ps1. Git here has no stored GitHub login, so pass gh's
+credentials per command: `git -c "credential.helper=!gh auth git-credential" push`, and for publish.ps1 set
+`GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=credential.helper`, `GIT_CONFIG_VALUE_0=!gh auth git-credential`.
 
 **Next steps (owner: "The fundamentals need to be put in order"):**
 1. Owner playtest for feel and balance (how far can a good player get?).
