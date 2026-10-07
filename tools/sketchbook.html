@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sketchbook</title>
+  <style>
+    :root { --bg: #1a1c2c; --panel: #262b3d; --line: #3b4260; --text: #e8eaf2; --muted: #9aa1b8; --accent: #ffcd75; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.35 system-ui, sans-serif; }
+    header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    header h1 { font-size: 16px; margin: 0 8px 0 0; }
+    input, select, textarea, button { font: inherit; color: var(--text); background: #1f2333; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+    button { cursor: pointer; }
+    button.on, button.primary { background: var(--accent); color: #1a1c2c; border-color: var(--accent); font-weight: 600; }
+    #title { min-width: 180px; flex: 1; }
+    main { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; }
+    #left { flex: 1 1 520px; min-width: 0; }
+    #right { flex: 0 1 300px; display: flex; flex-direction: column; gap: 12px; }
+    #tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    #wrap { overflow: auto; max-width: 100%; max-height: 75vh; border: 1px solid var(--line); border-radius: 6px; background: repeating-conic-gradient(#2a2f43 0 25%, #232738 0 50%) 0 0 / 16px 16px; }
+    canvas { display: block; image-rendering: pixelated; touch-action: none; cursor: crosshair; }
+    .box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+    .box h2 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    #palette { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; max-height: 46vh; overflow: auto; }
+    #palette { grid-template-columns: 1fr; }
+    .sw { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; font-size: 12px; }
+    .sw.sel { border-color: var(--accent); background: #1f2333; }
+    .chip { width: 22px; height: 22px; border-radius: 4px; border: 1px solid #000; flex: none; padding: 0; cursor: pointer; }
+    .sw .name { flex: 1; min-width: 0; padding: 3px 6px; font-size: 12px; }
+    .sw .key { color: var(--muted); font-family: ui-monospace, monospace; width: 12px; text-align: center; }
+    .sw .del { padding: 2px 6px; font-size: 11px; }
+    #addColour { width: 100%; margin-top: 6px; }
+    .palette-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .palette-actions button { flex: 1; font-size: 12px; }
+    textarea { width: 100%; min-height: 120px; resize: vertical; }
+    #status { color: var(--muted); font-size: 12px; min-height: 1.2em; }
+    .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+    @media (max-width: 700px) { main { padding: 10px; } #right { flex-basis: 100%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Sketchbook</h1>
+    <input id="title" placeholder="Name this sketch (e.g. dream base, new tower)">
+    <select id="mode" aria-label="Kind of sketch">
+      <option value="map">Map / layout (tiles)</option>
+      <option value="pixel">Pixel art (game colours)</option>
+    </select>
+    <select id="size" aria-label="Size"></select>
+    <button id="new">New</button>
+    <select id="open" aria-label="Open a saved sketch"><option value="">Open saved…</option></select>
+    <button id="save" class="primary">Save for Claude</button>
+  </header>
+  <main>
+    <div id="left">
+      <div id="tools">
+        <button data-tool="pen" class="on">Pencil</button>
+        <button data-tool="fill">Fill</button>
+        <button data-tool="erase">Eraser</button>
+        <button data-tool="pick">Picker</button>
+        <button id="undo">Undo</button>
+        <button id="clear">Clear</button>
+        <button id="zoomOut">−</button>
+        <button id="zoomIn">+</button>
+        <label style="display:flex;align-items:center;gap:4px;color:var(--muted)"><input type="checkbox" id="grid" checked> Grid</label>
+      </div>
+      <div id="wrap"><canvas id="cv"></canvas></div>
+      <p class="hint">Drag to draw. In map mode, 1 square = 1 game tile (24 px). Type in a colour's box to name it; click its swatch to change the colour.</p>
+    </div>
+    <div id="right">
+      <div class="box">
+        <h2>Colours — name them yourself</h2>
+        <div id="palette"></div>
+        <button id="addColour">+ Add colour</button>
+        <div class="palette-actions">
+          <button id="resetPalette" title="Back to the starting colours and names">Reset colours</button>
+        </div>
+      </div>
+      <div class="box"><h2>Notes for Claude</h2><textarea id="note" placeholder="What is this? What should Claude build or change?"></textarea></div>
+      <div id="status"></div>
+    </div>
+  </main>
+  <script>
+    // ---------- Palettes ----------
+    // Map mode: labelled colours for layouts. Labels can be renamed (double-click) and are saved with the sketch.
+    const MAP_PALETTE = [
+      ['g', '#38b764', 'Grass'], ['d', '#c29a5b', 'Path / dirt'], ['w', '#41a6f6', 'Water'], ['t', '#257179', 'Trees / forest'],
+      ['W', '#94b0c2', 'Wall'], ['T', '#b13e53', 'Tower'], ['H', '#ef7d57', 'House'], ['F', '#ffcd75', 'Farm / field'],
+      ['B', '#8b5a2b', 'Other building'], ['D', '#f4a6c6', 'Decoration'], ['z', '#5d275d', 'Zombie route'], ['n', '#f4f4f4', 'NPC / person'],
+      ['x', '#000000', 'Danger zone'], ['?', '#c86bff', 'Idea / note here'], ['1', '#ff3d6e', 'Custom 1'], ['2', '#00e0a0', 'Custom 2'],
+    ];
+    // Pixel mode: the game's own palette letters (js/art.js PAL), so sprites can go straight into the game.
+    const PIXEL_PALETTE = [
+      ['k', '#1a1c2c', 'Outline'], ['w', '#f4f4f4', 'White'], ['W', '#c8c8d0', 'Light grey'], ['t', '#333c57', 'Slate'],
+      ['s', '#94b0c2', 'Stone'], ['S', '#566c86', 'Dark stone'], ['e', '#9fb3c8', 'Steel'], ['E', '#5b6e85', 'Dark steel'],
+      ['r', '#b13e53', 'Red'], ['R', '#ef7d57', 'Orange'], ['q', '#7c2a40', 'Dark red'], ['b', '#a05038', 'Brick'],
+      ['B', '#6e3324', 'Dark brick'], ['y', '#ffcd75', 'Yellow'], ['Y', '#d9a033', 'Gold'], ['h', '#c8955a', 'Light wood'],
+      ['n', '#8b5a2b', 'Wood'], ['N', '#5a3a1f', 'Dark wood'], ['d', '#c29a5b', 'Dirt'], ['D', '#8d6a3a', 'Dark dirt'],
+      ['l', '#a7f070', 'Light green'], ['g', '#38b764', 'Green'], ['G', '#257179', 'Dark green'], ['a', '#8aa67a', 'Zombie skin'],
+      ['A', '#5e7a52', 'Dark zombie'], ['p', '#f4c8a0', 'Skin'], ['c', '#41a6f6', 'Sky blue'], ['u', '#3b5dc9', 'Blue'],
+      ['U', '#29366f', 'Navy'], ['v', '#7df9ff', 'Glow cyan'], ['M', '#7a2f8f', 'Purple'], ['m', '#2a1530', 'Deep purple'],
+      ['o', '#4a3568', 'Obsidian'], ['O', '#2a1a3e', 'Dark obsidian'], ['z', '#9a9a8c', 'Concrete'], ['Z', '#6a6a60', 'Dark concrete'],
+    ];
+    const SIZES = {
+      map: [['48x54', 'Whole world (48×54)'], ['12x12', 'Starting land (12×12)'], ['24x24', 'Big base area (24×24)'],
+        ['6x6', 'One plot (6×6)'], ['48x6', 'Open-world strip (48×6)'], ['custom', 'Custom…']],
+      pixel: [['24x24', '1 tile (24×24)'], ['24x40', 'Tall 1-tile, like a tower (24×40)'], ['48x48', '2×2 building (48×48)'],
+        ['72x72', '3×3 House (72×72)'], ['custom', 'Custom…']],
+    };
+
+    // ---------- State ----------
+    const $ = (id) => document.getElementById(id);
+    const cv = $('cv'), ctx = cv.getContext('2d');
+    let mode = 'map', W = 12, H = 12, cells = [], legend = {}, current = 'g', tool = 'pen', zoom = 1, undo = [];
+
+    function paletteFor(m) { return m === 'map' ? MAP_PALETTE : PIXEL_PALETTE; }
+    function defaultLegend(m) {
+      const out = {};
+      for (const [k, color, label] of paletteFor(m)) out[k] = { color, label };
+      return out;
+    }
+    // Your own colours and names are remembered (in this browser) for every new sketch.
+    const PALETTE_KEY = (m) => `defense.sketchbook.palette.${m}`;
+    function savedPalette(m) {
+      try {
+        const p = JSON.parse(localStorage.getItem(PALETTE_KEY(m)));
+        if (p && Array.isArray(p.order) && p.legend) return p;
+      } catch { /* none saved */ }
+      return null;
+    }
+    function rememberPalette() {
+      try { localStorage.setItem(PALETTE_KEY(mode), JSON.stringify({ order, legend })); } catch { /* storage off */ }
+    }
+    let order = []; // colour keys in the order they're listed
+    function freshLegend(m) {
+      const saved = savedPalette(m);
+      if (saved) { order = saved.order.filter((k) => saved.legend[k]); return saved.legend; }
+      order = paletteFor(m).map(([k]) => k);
+      return defaultLegend(m);
+    }
+    // A free single character to stand for a new colour in the saved rows.
+    const KEY_POOL = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&*+=@^~<>/|;:';
+    const freeKey = () => [...KEY_POOL].find((k) => !legend[k]);
+    function blank(w, h) { return Array.from({ length: h }, () => Array(w).fill('.')); }
+
+    function setSizeOptions() {
+      $('size').innerHTML = SIZES[mode].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+      $('size').value = `${W}x${H}` in Object.fromEntries(SIZES[mode]) ? `${W}x${H}` : SIZES[mode][0][0];
+    }
+
+    function newSketch(m, w, h) {
+      mode = m; W = w; H = h;
+      cells = blank(W, H);
+      legend = freshLegend(mode);
+      current = paletteFor(mode)[0][0];
+      undo = [];
+      $('mode').value = mode;
+      setSizeOptions();
+      $('size').value = `${W}x${H}`;
+      buildPalette();
+      fitZoom();
+      draw();
+    }
+
+    // ---------- Palette ----------
+    // Each colour: [swatch (click to change colour)] [name box (type to rename)] [key] [x for added colours].
+    function buildPalette() {
+      const el = $('palette');
+      el.innerHTML = '';
+      for (const k of Object.keys(legend)) if (!order.includes(k)) order.push(k);
+      const builtIn = new Set(paletteFor(mode).map(([p]) => p));
+      for (const k of order) {
+        const info = legend[k];
+        if (!info) continue;
+        const sw = document.createElement('div');
+        sw.className = 'sw' + (k === current ? ' sel' : '');
+        const select = () => { current = k; if (tool === 'erase' || tool === 'pick') setTool('pen'); el.querySelectorAll('.sw').forEach((s) => s.classList.toggle('sel', s === sw)); };
+
+        const chip = document.createElement('input');
+        chip.type = 'color'; chip.className = 'chip'; chip.value = info.color; chip.title = 'Change this colour';
+        chip.oninput = () => { info.color = chip.value; draw(); rememberPalette(); };
+        chip.onclick = (e) => { e.stopPropagation(); select(); };
+
+        const name = document.createElement('input');
+        name.className = 'name'; name.value = info.label; name.maxLength = 40; name.placeholder = 'Name this colour';
+        name.oninput = () => { info.label = name.value; rememberPalette(); };
+        name.onfocus = select;
+
+        const key = document.createElement('span');
+        key.className = 'key'; key.textContent = k; key.title = 'The letter this colour uses in the saved file';
+
+        sw.append(chip, name, key);
+        if (!builtIn.has(k)) {
+          const del = document.createElement('button');
+          del.className = 'del'; del.textContent = '×'; del.title = 'Remove this colour (squares using it are erased)';
+          del.onclick = (e) => {
+            e.stopPropagation();
+            if (!confirm(`Remove "${info.label}"? Squares painted with it will be erased.`)) return;
+            snapshot();
+            cells = cells.map((row) => row.map((c) => (c === k ? '.' : c)));
+            delete legend[k];
+            order = order.filter((o) => o !== k);
+            if (current === k) current = order[0];
+            rememberPalette(); buildPalette(); draw();
+          };
+          sw.append(del);
+        }
+        sw.onclick = select;
+        el.append(sw);
+      }
+    }
+
+    $('addColour').onclick = () => {
+      const k = freeKey();
+      if (!k) { setStatus('No room for more colours.'); return; }
+      const hue = Math.floor((order.length * 137) % 360);
+      legend[k] = { color: hslToHex(hue, 70, 55), label: '' };
+      order.push(k);
+      current = k;
+      rememberPalette();
+      buildPalette();
+      // Jump straight to naming it.
+      const boxes = $('palette').querySelectorAll('.name');
+      boxes[boxes.length - 1]?.focus();
+    };
+    $('resetPalette').onclick = () => {
+      if (!confirm('Put the colours and names back to how they started? (Your drawing stays; squares in colours you added are erased.)')) return;
+      try { localStorage.removeItem(PALETTE_KEY(mode)); } catch { /* ignore */ }
+      legend = defaultLegend(mode);
+      order = paletteFor(mode).map(([p]) => p);
+      cells = cells.map((row) => row.map((c) => (legend[c] ? c : '.')));
+      current = order[0];
+      buildPalette(); draw();
+    };
+
+    function hslToHex(h, s, l) {
+      s /= 100; l /= 100;
+      const f = (n) => { const k = (n + h / 30) % 12; const c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)); return Math.round(255 * c).toString(16).padStart(2, '0'); };
+      return `#${f(0)}${f(8)}${f(4)}`;
+    }
+
+    // ---------- Drawing ----------
+    const cellPx = () => Math.max(2, Math.round(baseCell * zoom));
+    let baseCell = 16;
+    function fitZoom() {
+      const avail = Math.max(200, $('wrap').clientWidth || 600);
+      baseCell = Math.max(3, Math.min(32, Math.floor(Math.min(avail / W, (window.innerHeight * 0.72) / H))));
+      zoom = 1;
+    }
+    function draw() {
+      const s = cellPx();
+      cv.width = W * s; cv.height = H * s;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const k = cells[y][x];
+        if (k === '.') continue;
+        ctx.fillStyle = legend[k]?.color || '#ff00ff';
+        ctx.fillRect(x * s, y * s, s, s);
+        if (mode === 'map' && k === '?' && s >= 10) { ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.floor(s * 0.8)}px system-ui`; ctx.textAlign = 'center'; ctx.fillText('?', x * s + s / 2, y * s + s * 0.8); }
+      }
+      if ($('grid').checked && s >= 6) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let x = 0; x <= W; x++) { ctx.moveTo(x * s + 0.5, 0); ctx.lineTo(x * s + 0.5, H * s); }
+        for (let y = 0; y <= H; y++) { ctx.moveTo(0, y * s + 0.5); ctx.lineTo(W * s, y * s + 0.5); }
+        ctx.stroke();
+        // In map mode, show plot borders every 6 tiles.
+        if (mode === 'map') {
+          ctx.strokeStyle = 'rgba(255,205,117,0.35)';
+          ctx.beginPath();
+          for (let x = 0; x <= W; x += 6) { ctx.moveTo(x * s + 0.5, 0); ctx.lineTo(x * s + 0.5, H * s); }
+          for (let y = 0; y <= H; y += 6) { ctx.moveTo(0, y * s + 0.5); ctx.lineTo(W * s, y * s + 0.5); }
+          ctx.stroke();
+        }
+      }
+    }
+
+    function snapshot() { undo.push(cells.map((r) => r.slice())); if (undo.length > 40) undo.shift(); }
+
+    function cellAt(e) {
+      const r = cv.getBoundingClientRect(), s = cellPx();
+      const x = Math.floor((e.clientX - r.left) / (r.width / (W * s)) / s), y = Math.floor((e.clientY - r.top) / (r.height / (H * s)) / s);
+      return x >= 0 && y >= 0 && x < W && y < H ? { x, y } : null;
+    }
+
+    function fill(x, y, k) {
+      const from = cells[y][x];
+      if (from === k) return;
+      const stack = [[x, y]];
+      while (stack.length) {
+        const [cx, cy] = stack.pop();
+        if (cx < 0 || cy < 0 || cx >= W || cy >= H || cells[cy][cx] !== from) continue;
+        cells[cy][cx] = k;
+        stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+      }
+    }
+
+    let painting = false;
+    function apply(e) {
+      const p = cellAt(e);
+      if (!p) return;
+      if (tool === 'pick') { const k = cells[p.y][p.x]; if (k !== '.') { current = k; setTool('pen'); buildPalette(); } return; }
+      if (tool === 'fill') { fill(p.x, p.y, current); draw(); return; }
+      cells[p.y][p.x] = tool === 'erase' ? '.' : current;
+      draw();
+    }
+    cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); snapshot(); painting = true; apply(e); });
+    cv.addEventListener('pointermove', (e) => { if (painting && (tool === 'pen' || tool === 'erase')) apply(e); });
+    const stop = () => { painting = false; };
+    cv.addEventListener('pointerup', stop);
+    cv.addEventListener('pointercancel', stop);
+
+    function setTool(t) {
+      tool = t;
+      document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
+    }
+    document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+    $('undo').onclick = () => { if (undo.length) { cells = undo.pop(); draw(); } };
+    $('clear').onclick = () => { if (confirm('Clear the whole sketch?')) { snapshot(); cells = blank(W, H); draw(); } };
+    $('zoomIn').onclick = () => { zoom = Math.min(4, zoom * 1.25); draw(); };
+    $('zoomOut').onclick = () => { zoom = Math.max(0.25, zoom / 1.25); draw(); };
+    $('grid').onchange = draw;
+
+    // ---------- New / size / mode ----------
+    function askSize(value) {
+      if (value !== 'custom') return value.split('x').map(Number);
+      const v = prompt('Width x height (e.g. 30x20):', `${W}x${H}`) || '';
+      const m = /^(\d+)\s*x\s*(\d+)$/i.exec(v.trim());
+      return m ? [Math.min(128, Math.max(1, +m[1])), Math.min(128, Math.max(1, +m[2]))] : [W, H];
+    }
+    $('mode').onchange = () => {
+      const m = $('mode').value;
+      const [w, h] = SIZES[m][0][0].split('x').map(Number);
+      newSketch(m, w, h);
+    };
+    $('size').onchange = () => {
+      const [w, h] = askSize($('size').value);
+      // Keep what's drawn (crop or pad) when changing size.
+      const old = cells;
+      W = w; H = h;
+      cells = blank(W, H).map((row, y) => row.map((_, x) => old[y]?.[x] ?? '.'));
+      setSizeOptions(); $('size').value = SIZES[mode].some(([v]) => v === `${W}x${H}`) ? `${W}x${H}` : 'custom';
+      fitZoom(); draw();
+    };
+    $('new').onclick = () => {
+      if (!confirm('Start a new sketch? Unsaved changes are lost.')) return;
+      $('title').value = ''; $('note').value = '';
+      newSketch(mode, W, H);
+    };
+
+    // ---------- Save / open ----------
+    const slug = (s) => (s || 'sketch').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'sketch';
+    const setStatus = (t) => { $('status').textContent = t; };
+
+    async function save() {
+      const title = $('title').value.trim() || 'Untitled sketch';
+      const name = slug(title);
+      // Only list colours actually used, so the file reads cleanly.
+      const used = new Set(cells.flat().filter((k) => k !== '.'));
+      const named = (info) => ({ color: info.color, label: info.label.trim() || 'Unnamed colour' });
+      const usedLegend = Object.fromEntries(order.filter((k) => used.has(k)).map((k) => [k, named(legend[k])]));
+      const fullLegend = Object.fromEntries(order.filter((k) => legend[k]).map((k) => [k, named(legend[k])]));
+      const data = {
+        title, mode, width: W, height: H,
+        tile: mode === 'map' ? 'one square = one game tile (24 px); plots are 6×6 tiles' : 'one square = one pixel; letters are js/art.js PAL keys (or your own added colours)',
+        legend: usedLegend, fullLegend, order,
+        rows: cells.map((r) => r.join('')),
+        note: $('note').value,
+        savedAt: new Date().toISOString(),
+      };
+      try {
+        const r1 = await fetch(`/sketches/${name}.json`, { method: 'PUT', body: JSON.stringify(data, null, 2) });
+        // A picture too, for a quick look.
+        const s = mode === 'map' ? 12 : 8;
+        const pic = document.createElement('canvas');
+        pic.width = W * s; pic.height = H * s;
+        const pc = pic.getContext('2d');
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+          const k = cells[y][x]; if (k === '.') continue;
+          pc.fillStyle = legend[k].color; pc.fillRect(x * s, y * s, s, s);
+        }
+        const blob = await new Promise((res) => pic.toBlob(res, 'image/png'));
+        const r2 = await fetch(`/sketches/${name}.png`, { method: 'PUT', body: blob });
+        if (!r1.ok || !r2.ok) throw new Error(`server said ${r1.status}/${r2.status}`);
+        setStatus(`Saved as sketches/${name}.json — Claude can read it now.`);
+        refreshList(name);
+      } catch (err) {
+        setStatus(`Couldn't save (${err.message}). Is the game server running? Start it with "Play Defense.cmd".`);
+      }
+    }
+    $('save').onclick = save;
+
+    async function refreshList(selectName) {
+      try {
+        const list = await (await fetch('/sketches/', { cache: 'no-store' })).json();
+        $('open').innerHTML = '<option value="">Open saved…</option>' + list.map((f) => `<option value="${f}">${f.replace(/\.json$/, '')}</option>`).join('');
+        if (selectName) $('open').value = `${selectName}.json`;
+      } catch { /* server not running */ }
+    }
+    $('open').onchange = async () => {
+      const f = $('open').value;
+      if (!f) return;
+      try {
+        const d = await (await fetch(`/sketches/${f}`, { cache: 'no-store' })).json();
+        mode = d.mode; W = d.width; H = d.height;
+        // The sketch brings its own colours and names; anything else from your palette is kept too.
+        const saved = d.fullLegend || d.legend;
+        legend = { ...freshLegend(mode), ...structuredClone(saved) };
+        order = [...(d.order || Object.keys(saved)), ...order].filter((k, i, a) => legend[k] && a.indexOf(k) === i);
+        cells = d.rows.map((r) => [...r]);
+        current = order[0];
+        $('title').value = d.title || ''; $('note').value = d.note || '';
+        $('mode').value = mode; setSizeOptions();
+        $('size').value = SIZES[mode].some(([v]) => v === `${W}x${H}`) ? `${W}x${H}` : 'custom';
+        undo = []; buildPalette(); fitZoom(); draw();
+        setStatus(`Opened ${f}`);
+      } catch { setStatus(`Couldn't open ${f}`); }
+    };
+
+    newSketch('map', 12, 12);
+    refreshList();
+    window.addEventListener('resize', () => { fitZoom(); draw(); });
+  </script>
+</body>
+</html>

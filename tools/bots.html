@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bot testers</title>
+  <style>
+    body { background: #1a1c2c; color: #e6e8ee; font: 14px/1.4 system-ui; margin: 0; padding: 16px; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p { color: #9097a8; margin: 0 0 12px; }
+    button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #566c86; background: #272b36; color: #e6e8ee; cursor: pointer; }
+    label { color: #9097a8; margin-left: 10px; }
+    input { width: 40px; font: inherit; }
+    table { border-collapse: collapse; margin-top: 14px; }
+    th, td { padding: 4px 10px; text-align: right; border-bottom: 1px solid #353a48; }
+    th:first-child, td:first-child { text-align: left; }
+    .won { color: #6fcf6f; }
+    .lost { color: #e5605a; }
+    iframe { width: 216px; height: 384px; border: 1px solid #353a48; margin-top: 14px; }
+    #status { color: #f2b544; }
+  </style>
+</head>
+<body>
+  <h1>Bot testers</h1>
+  <p>Each bot plays the real game, fast-forwarded. "Cleared" is waves survived out of 10.</p>
+  <button id="run">Run all bots</button>
+  <label>Seasons each <input id="seasons" type="number" value="3" min="1" max="20"></label>
+  <span id="status"></span>
+  <table id="out"><thead><tr><th>Bot</th><th>Run</th><th>Omen</th><th>Cleared</th><th>Earned</th><th>Gold</th><th>House</th><th>Land</th><th>Run length</th></tr></thead><tbody></tbody></table>
+  <table id="summary"><thead><tr><th>Bot</th><th>Avg cleared</th><th>Best</th><th>Worst</th><th>Wins</th></tr></thead><tbody></tbody></table>
+  <iframe id="game" src="../index.html?bots=1"></iframe>
+  <script type="module">
+    import { BOTS, playSeasons } from '../js/bots.js';
+
+    const frame = document.getElementById('game');
+    const status = document.getElementById('status');
+    const tbody = document.querySelector('#out tbody');
+    const sbody = document.querySelector('#summary tbody');
+
+    const gameHook = () => new Promise((resolve) => {
+      const poll = () => (frame.contentWindow?.defense ? resolve(frame.contentWindow.defense) : setTimeout(poll, 50));
+      poll();
+    });
+
+    async function runAll() {
+      const d = await gameHook();
+      const seasons = Number(document.getElementById('seasons').value) || 3;
+      tbody.innerHTML = '';
+      sbody.innerHTML = '';
+      for (const [key, bot] of Object.entries(BOTS)) {
+        status.textContent = `${bot.name} is playing...`;
+        const rows = await playSeasons(d, bot, seasons, (r) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${bot.name}</td><td>${r.season}</td><td>${r.omen}</td><td class="${r.won ? 'won' : 'lost'}">${r.cleared}/10</td>`
+            + `<td>+${r.earned}</td><td>${r.gold}</td><td>LV ${r.house}</td><td>${r.land}</td><td>${r.minutes} min</td>`;
+          tbody.append(tr);
+        });
+        const cleared = rows.map((r) => r.cleared);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${bot.name}</td><td>${(cleared.reduce((a, b) => a + b, 0) / cleared.length).toFixed(1)}</td>`
+          + `<td>${Math.max(...cleared)}</td><td>${Math.min(...cleared)}</td><td>${rows.filter((r) => r.won).length}/${rows.length}</td>`;
+        sbody.append(tr);
+      }
+      status.textContent = 'Done.';
+    }
+
+    document.getElementById('run').addEventListener('click', runAll);
+    runAll();
+  </script>
+</body>
+</html>

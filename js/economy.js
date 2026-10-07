@@ -1,0 +1,105 @@
+// The base-building economy: gold (the only money - you earn it killing zombies), building and upgrading
+// (with the builder's timer) and House-level limits.
+// Everything takes `game` (the save object) and `now` (game-clock milliseconds), so it can be tested.
+
+import {
+  MAX_LEVEL, BUILD_COST, upgradeCost, limitFor, hpFor, storageCap,
+} from './config.js';
+
+export const RES = ['gold'];
+const SHORT = { gold: 'G' };
+
+export const houseOf = (game) => game.buildings.find((b) => b.type === 'house');
+export const houseLevel = (game) => houseOf(game).level || 1;
+export const countOf = (game, type) => game.buildings.filter((b) => b.type === type).length;
+
+export const canAfford = (game, cost) => RES.every((r) => (game[r] || 0) >= (cost[r] || 0));
+export const missing = (game, cost) => RES.find((r) => (game[r] || 0) < (cost[r] || 0));
+const pay = (game, cost) => { for (const r of RES) game[r] -= cost[r] || 0; };
+
+export const formatCost = (cost) => RES.filter((r) => cost[r]).map((r) => `${cost[r]}${SHORT[r]}`).join(' ') || 'FREE';
+
+export function formatTime(seconds) {
+  const s = Math.max(0, Math.ceil(seconds));
+  if (s < 60) return `${s}S`;
+  if (s < 3600) return `${Math.floor(s / 60)}M ${s % 60}S`;
+  if (s < 86400) return `${Math.floor(s / 3600)}H ${Math.floor((s % 3600) / 60)}M`;
+  return `${Math.floor(s / 86400)}D ${Math.floor((s % 86400) / 3600)}H`;
+}
+
+// Add resources, but never past what the House can store. Returns how much actually went in.
+export function earn(game, res, amount) {
+  const cap = storageCap(houseLevel(game))[res];
+  const take = Math.max(0, Math.min(amount, cap - (game[res] || 0)));
+  game[res] = (game[res] || 0) + take;
+  return take;
+}
+
+// ---------- Building new things ----------
+
+// Why can't you build another of this type? null = you can.
+export function buildBlock(game, type) {
+  const limit = limitFor(type, houseLevel(game));
+  if (limit === 0) {
+    const need = [...Array(MAX_LEVEL).keys()].map((i) => i + 1).find((lv) => limitFor(type, lv) > 0);
+    return `NEEDS HOUSE LV ${need}`;
+  }
+  if (countOf(game, type) >= limit) return `LIMIT ${limit} - UPGRADE HOUSE`;
+  const cost = BUILD_COST[type];
+  if (!canAfford(game, cost)) return `NOT ENOUGH ${missing(game, cost).toUpperCase()}`;
+  return null;
+}
+
+// Add a new building (placement already checked). Returns it.
+export function build(game, type, c, r, now) {
+  pay(game, BUILD_COST[type]);
+  const b = { id: game.nextId++, type, c, r, level: 1, hp: hpFor(type, 1) };
+  game.buildings.push(b);
+  return b;
+}
+
+// ---------- Upgrading ----------
+
+export const underConstruction = (game, b) => game.builder?.id === b.id;
+
+// Why can't this be upgraded right now? null = it can.
+export function upgradeBlock(game, b) {
+  const cost = upgradeCost(b.type, b.level || 1);
+  if (!cost) return b.level >= MAX_LEVEL ? 'MAX LEVEL' : 'CANNOT UPGRADE';
+  if (b.hp <= 0) return 'REPAIR IT FIRST';
+  if (b.type !== 'house' && b.level >= houseLevel(game)) return `NEEDS HOUSE LV ${b.level + 1}`;
+  if (underConstruction(game, b)) return 'UPGRADING';
+  if (cost.time > 0 && game.builder) return 'BUILDER IS BUSY';
+  if (!canAfford(game, cost)) return `NOT ENOUGH ${missing(game, cost).toUpperCase()}`;
+  return null;
+}
+
+function levelUp(game, b) {
+  const wasFull = b.hp >= hpFor(b.type, b.level);
+  b.level++;
+  if (wasFull || b.type === 'house') b.hp = hpFor(b.type, b.level);
+}
+
+// Pay and start. Walls finish instantly; everything else hands the job to the builder.
+export function startUpgrade(game, b, now) {
+  const cost = upgradeCost(b.type, b.level || 1);
+  pay(game, cost);
+  if (cost.time <= 0) { levelUp(game, b); return true; }
+  game.builder = { id: b.id, start: now, until: now + cost.time * 1000 };
+  return false;
+}
+
+// If the builder's job is done, apply it. Returns the finished building, or null.
+export function finishBuilder(game, now) {
+  if (!game.builder || now < game.builder.until) return null;
+  const b = game.buildings.find((x) => x.id === game.builder.id);
+  game.builder = null;
+  if (b) levelUp(game, b);
+  return b || null;
+}
+
+// For testing: make the builder finish now.
+export function rushBuilder(game, now) {
+  if (game.builder) game.builder.until = now;
+  return finishBuilder(game, now);
+}

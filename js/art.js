@@ -7,18 +7,33 @@ export const SIZE = 24;
 export const PAL = {
   k: '#1a1c2c', // outline
   w: '#f4f4f4', W: '#c8c8d0', // white walls
-  r: '#b13e53', R: '#ef7d57', // roof
-  y: '#ffcd75', // window light
-  n: '#8b5a2b', N: '#5a3a1f', // wood
-  s: '#94b0c2', S: '#566c86', // stone
+  r: '#b13e53', R: '#ef7d57', q: '#7c2a40', // roof
+  y: '#ffcd75', Y: '#d9a033', // window light, gold
+  n: '#8b5a2b', N: '#5a3a1f', h: '#c8955a', // wood (h = light)
+  s: '#94b0c2', S: '#566c86', t: '#333c57', // stone
+  b: '#a05038', B: '#6e3324', // brick
+  e: '#9fb3c8', E: '#5b6e85', // steel
+  o: '#4a3568', O: '#2a1a3e', v: '#7df9ff', // obsidian, glow
+  z: '#9a9a8c', Z: '#6a6a60', // concrete
   g: '#38b764', G: '#257179', l: '#a7f070', // grass
+  m: '#2a1530', M: '#7a2f8f', // monster cave
+  d: '#c29a5b', D: '#8d6a3a', // dirt road
+  c: '#41a6f6', C: '#29366f', // ice / water
+  a: '#8aa67a', A: '#5e7a52', // zombie skin
   p: '#f4c8a0', // skin
   u: '#3b5dc9', U: '#29366f', // clothes
   x: 'rgba(26,28,44,0.28)', // shadow
 };
 
-// Palette swap for a second villager.
-export const PAL_RED = { ...PAL, u: '#b13e53', U: '#5d275d' };
+// Palette swaps.
+export const PAL_RED = { ...PAL, u: '#b13e53', U: '#5d275d' };   // second villager
+// Zombie variants (palette swaps of the one zombie sprite).
+export const PAL_RUNNER = { ...PAL, u: '#b13e53', U: '#5d275d', a: '#a3b88c' };            // red shirt, paler
+export const PAL_BRUTE = { ...PAL, u: '#566c86', U: '#333c57', a: '#7a8a6a', A: '#4a5a40' }; // grey, heavier
+export const PAL_KING = { ...PAL, u: '#7a2f8f', U: '#2a1530', a: '#6e8f60', k: '#1a1c2c' };  // royal purple
+
+// Every coloured pixel turned white, for the hit flash.
+export const PAL_FLASH = Object.fromEntries(Object.keys(PAL).map((k) => [k, k === 'x' ? 'rgba(0,0,0,0)' : '#ffffff']));
 
 function mirror(half) {
   if (half.length !== SIZE) throw new Error(`sprite needs ${SIZE} rows, got ${half.length}`);
@@ -111,8 +126,118 @@ export const SPRITES = {
   ]),
 };
 
-// Small deterministic hash so generated art is the same every load.
-function hash(x, y, seed) {
+SPRITES.tower = mirror([
+  '............',
+  '...........k',
+  '.........kkr',
+  '.......kkrRr',
+  '.....kkrRrrr',
+  '....krRrrrrr',
+  '...kkkkkkkkk',
+  '....knnnnnnn',
+  '....knnnnkkk',
+  '....knnnnkNN',
+  '....knnnnkNN',
+  '....knnnnkkk',
+  '....kNNNNNNN',
+  '...kkkkkkkkk',
+  '.....kSssSss',
+  '.....ksSssSs',
+  '.....kSssSss',
+  '.....ksSssSs',
+  '.....kSssSss',
+  '.....kSSSSSS',
+  '.....kkkkkkk',
+  '............',
+  '............',
+  '............',
+]);
+
+SPRITES.rubble = mirror([
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '..........kk',
+  '.......kk.ks',
+  '......kssksS',
+  '....kkksSkSS',
+  '...kssSSSkSS',
+  '...kkkkkkkkk',
+  '............',
+  '............',
+  '............',
+]);
+
+// Zombie: arms out, torn shirt, red eyes.
+SPRITES.zombie = mirror([
+  '............',
+  '............',
+  '............',
+  '........kkkk',
+  '.......kAaaa',
+  '.......kaaaa',
+  '.......kaaRa',
+  '.......kaaaa',
+  '.......kakkk',
+  '........kkkk',
+  '..kaaakkuuuu',
+  '..kkkkkuUuuu',
+  '......kuuUuu',
+  '......kuuuuu',
+  '......kUUUUU',
+  '.......kUUUk',
+  '.......kUUUk',
+  '.......kaaak',
+  '........kkk.',
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+]);
+
+// Monster cave at the map edge: stone arch, dark inside, glowing eyes.
+SPRITES.cave = mirror([
+  '............',
+  '............',
+  '............',
+  '........kkkk',
+  '......kkSSSS',
+  '.....kSSssss',
+  '....kSsskkkk',
+  '....kSskmmmm',
+  '...kSskmmmmm',
+  '...kSskmmmmm',
+  '...kSskmmmmm',
+  '..kSsskmmmmm',
+  '..kSskmmyymm',
+  '..kSskmmmmmm',
+  '..kSskmmmmmm',
+  '..kSskmmmmmm',
+  '..kSskmMMMMM',
+  '.kSSskMMMMMM',
+  '.kSsskkkkkkk',
+  '.kkkkkkkkkkk',
+  '............',
+  '............',
+  '............',
+  '............',
+]);
+
+// Small deterministic hash so generated art (and the forest) is the same every load.
+export function hash(x, y, seed) {
   let h = (x * 374761393 + y * 668265263 + seed * 1442695041) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
@@ -157,6 +282,207 @@ export function grassRows(seed) {
   return toRows(g);
 }
 
+// Dirt road tile. `edges` darkens the sides that border grass: { n, s, e, w }.
+export function dirtRows(seed, edges = {}) {
+  const g = grid('d');
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const h = hash(x, y, seed + 50);
+      if (h < 0.05) g[y][x] = 'D';
+      else if (h < 0.07) g[y][x] = 'y';
+    }
+  }
+  for (let i = 0; i < SIZE; i++) {
+    if (edges.n) g[0][i] = 'D';
+    if (edges.s) g[SIZE - 1][i] = 'D';
+    if (edges.w) g[i][0] = 'D';
+    if (edges.e) g[i][SIZE - 1] = 'D';
+  }
+  return toRows(g);
+}
+
+// Walls (10 levels) live in art-walls.js; the House (10 levels) in art-houses.js.
+
+// The 3×3-tile House (72×72): gable roof with shingles, chimney, two windows, door, stone footing.
+export function bigHouseRows() {
+  const S = 72;
+  const g = Array.from({ length: S }, () => Array(S).fill('.'));
+  const rect = (x0, y0, x1, y1, ch) => {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) g[y][x] = ch;
+  };
+  const frame = (x0, y0, x1, y1) => {
+    for (let x = x0; x <= x1; x++) { g[y0][x] = 'k'; g[y1][x] = 'k'; }
+    for (let y = y0; y <= y1; y++) { g[y][x0] = 'k'; g[y][x1] = 'k'; }
+  };
+
+  // Chimney (behind the roof).
+  rect(48, 8, 55, 26, 's');
+  rect(53, 8, 55, 26, 'S');
+  frame(47, 7, 56, 26);
+
+  // Roof: widens from the peak down to the eaves; shingle lines every 5 rows.
+  for (let y = 6; y <= 33; y++) {
+    const hw = Math.min(32, 2 + (y - 6) * 1.12);
+    const x0 = Math.round(35.5 - hw), x1 = Math.round(35.5 + hw);
+    for (let x = x0; x <= x1; x++) {
+      let ch = (y - 6) % 5 === 4 ? 'q' : 'r';
+      if (x < 36 && x - x0 < 3 && ch === 'r') ch = 'R'; // sunlit left edge
+      g[y][x] = ch;
+    }
+  }
+  rect(3, 34, 68, 35, 'k'); // eaves
+
+  // Walls.
+  rect(8, 36, 63, 62, 'w');
+  rect(8, 60, 63, 62, 'W');
+  frame(7, 36, 64, 63);
+
+  // Windows.
+  for (const x0 of [14, 48]) {
+    rect(x0, 41, x0 + 9, 50, 'y');
+    frame(x0 - 1, 40, x0 + 10, 51);
+    rect(x0 + 4, 41, x0 + 5, 50, 'k');
+    rect(x0, 45, x0 + 9, 45, 'k');
+  }
+
+  // Door.
+  rect(31, 45, 40, 62, 'n');
+  rect(39, 45, 40, 62, 'N');
+  frame(30, 44, 41, 63);
+  g[54][37] = 'y';
+
+  // Stone footing.
+  rect(5, 64, 66, 66, 'S');
+  for (let x = 8; x < 66; x += 6) g[65][x] = 'k';
+  frame(4, 63, 67, 67);
+
+  // Outline the roof.
+  const out = g.map((row) => row.slice());
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      if (g[y][x] !== '.') continue;
+      if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const v = g[y + dy]?.[x + dx]; return v && v !== '.'; })) out[y][x] = 'k';
+    }
+  }
+  return out.map((r) => r.join(''));
+}
+
+// Pond water tile. `edges` gives a sandy rim on the sides that border land.
+export function waterRows(seed, edges = {}) {
+  const g = grid('c');
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const h = hash(x, y, seed + 70);
+      if ((y + seed) % 6 === 2 && x % 8 < 4 && h < 0.8) g[y][x] = 'w';      // ripples
+      else if (h < 0.05) g[y][x] = 'C';
+    }
+  }
+  for (let i = 0; i < SIZE; i++) {
+    for (let d = 0; d < 3; d++) {
+      const ch = d === 0 ? 'd' : d === 1 ? 'D' : 'C';
+      if (edges.n) g[d][i] = ch;
+      if (edges.s) g[SIZE - 1 - d][i] = ch;
+      if (edges.w) g[i][d] = ch;
+      if (edges.e) g[i][SIZE - 1 - d] = ch;
+    }
+  }
+  return toRows(g);
+}
+
+// ---------- World terrain (the valley) ----------
+
+// Mountain rock ground.
+export function mountainRows(seed) {
+  const g = grid('s');
+  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+    const h = hash(x, y, seed + 90);
+    if (h < 0.10) g[y][x] = 'S';
+    else if (h < 0.14) g[y][x] = 'W';
+    else if (h < 0.16) g[y][x] = 't';
+  }
+  return toRows(g);
+}
+
+// A rocky peak with a snow cap, drawn on some mountain tiles (like trees on grass).
+export function peakRows(seed) {
+  const g = grid();
+  const top = 2 + (seed % 3), cx = 11 + (seed % 2);
+  for (let y = top; y < SIZE - 2; y++) {
+    const hw = Math.round(((y - top) / (SIZE - 2 - top)) * 11);
+    for (let x = cx - hw; x <= cx + hw; x++) {
+      if (x < 0 || x >= SIZE) continue;
+      const shade = x < cx ? 'W' : 'S';
+      g[y][x] = y - top < 5 ? (x < cx ? 'w' : 'W') : shade;
+    }
+  }
+  return toRows(outline(g));
+}
+
+// Deep ocean. `edges` gives a sandy beach on sides that touch land.
+export function oceanRows(seed, edges = {}) {
+  const g = grid('U');
+  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+    const h = hash(x, y, seed + 120);
+    if ((y + seed * 3) % 8 === 3 && (x + seed) % 10 < 5) g[y][x] = 'u';
+    else if (h < 0.03) g[y][x] = 'c';
+  }
+  for (let i = 0; i < SIZE; i++) {
+    for (let d = 0; d < 4; d++) {
+      const ch = d < 2 ? 'd' : d === 2 ? 'y' : 'c';
+      if (edges.n) g[d][i] = ch;
+      if (edges.s) g[SIZE - 1 - d][i] = ch;
+      if (edges.w) g[i][d] = ch;
+      if (edges.e) g[i][SIZE - 1 - d] = ch;
+    }
+  }
+  return toRows(g);
+}
+
+// Zombie country: dark, dead ground.
+export function dangerRows(seed) {
+  const g = grid('m');
+  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+    const h = hash(x, y, seed + 150);
+    if (h < 0.08) g[y][x] = 'O';
+    else if (h < 0.11) g[y][x] = 'k';
+    else if (h < 0.125) g[y][x] = 'M';
+  }
+  return toRows(g);
+}
+
+// A bare dead tree for the danger zone.
+export function deadTreeRows() {
+  const g = grid();
+  for (let y = 8; y <= 21; y++) { g[y][11] = 'N'; g[y][12] = 'D'; }
+  const branch = (x0, y0, dx, len) => { for (let i = 0; i < len; i++) { const x = x0 + dx * i, y = y0 - Math.floor(i / 2); if (g[y]?.[x] !== undefined) g[y][x] = 'N'; } };
+  branch(11, 11, -1, 7); branch(12, 9, 1, 7); branch(11, 15, -1, 5); branch(12, 14, 1, 6);
+  return toRows(outline(g));
+}
+
+// Open-world meadow: softer, lighter grass with a few flowers.
+export function meadowRows(seed) {
+  const g = grid('g');
+  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+    const h = hash(x, y, seed + 180);
+    if (h < 0.10) g[y][x] = 'l';
+    else if (h < 0.115) g[y][x] = (x + y) % 2 ? 'y' : 'w';
+    else if (h < 0.13) g[y][x] = 'G';
+  }
+  return toRows(g);
+}
+
+// A wooden bridge plank tile (the bridge runs north–south). side: 'w' | 'e' | null for the rail.
+export function bridgeRows(side) {
+  const g = grid('h');
+  for (let y = 0; y < SIZE; y++) {
+    if (y % 4 === 3) for (let x = 0; x < SIZE; x++) g[y][x] = 'n';
+    for (let x = 0; x < SIZE; x++) if ((x * 7 + y) % 23 === 0) g[y][x] = 'N';
+  }
+  if (side === 'w') for (let y = 0; y < SIZE; y++) { g[y][0] = 'k'; g[y][1] = 'N'; g[y][2] = 'n'; }
+  if (side === 'e') for (let y = 0; y < SIZE; y++) { g[y][SIZE - 1] = 'k'; g[y][SIZE - 2] = 'N'; g[y][SIZE - 3] = 'n'; }
+  return toRows(g);
+}
+
 export function treeRows() {
   const g = grid();
   for (let y = 15; y <= 20; y++) for (let x = 10; x <= 13; x++) g[y][x] = x === 13 ? 'N' : 'n';
@@ -198,6 +524,8 @@ const FONT_SRC = {
   8: '111101111101111', 9: '111101111001110',
   ' ': '000000000000000', ':': '000010000010000', '/': '001001010100100', '-': '000000111000000',
   '!': '010010010000010', '.': '000000000000010', '+': '000010111010000', '?': '110001010000010',
+  '(': '010100100100010', ')': '010001001001010', '%': '101001010100101', ',': '000000000010100',
+  "'": '010010000000000', '<': '001010100010001', '>': '100010001010100',
 };
 export const FONT = Object.fromEntries(
   Object.entries(FONT_SRC).map(([ch, bits]) => [ch, [...bits].map((b) => b === '1')]),
