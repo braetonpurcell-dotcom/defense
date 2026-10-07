@@ -1448,6 +1448,7 @@ function nextWave() {
   placing = null;
   placingItem = null;
   itemsOpen = false;
+  multi = [];
   battle.startWave(run.wave);
   const kings = run.wave / BOSS_EVERY;
   showToast(isKingWave(run.wave) ? (kings > 1 ? `WAVE ${run.wave} - ${kings} KINGS ARE COMING!` : `WAVE ${run.wave} - THE KING IS COMING!`) : `WAVE ${run.wave} - HERE THEY COME!`);
@@ -1831,6 +1832,7 @@ function onWorldTap(sx, sy) {
   const w = screenToWorld(sx, sy);
   const c = Math.floor(w.x / T), r = Math.floor(w.y / T);
   if (!inWorld(c, r)) return;
+  if (multi.length) { multi = []; return; } // tapping the map lets go of a wall selection
   if (isCave(c, r)) { selected = null; showToast('ZOMBIES COME OUT OF THIS DEN'); return; }
   // Your hero: tap them for their menu; after MOVE, the next tap picks their guard spot.
   if (movingHero) {
@@ -1913,7 +1915,7 @@ function onWorldTap(sx, sy) {
 const inRect = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h;
 const toUI = (sx, sy) => ({ x: (sx * dpr) / ui, y: (sy * dpr) / ui });
 const showPanel = () => selected && phase !== 'wave' && phase !== 'end' && !placing && !itemsOpen;
-const showRepair = () => phase === 'home' && !buildMode && !itemsOpen && !showPanel() && repairCost() > 0;
+const showRepair = () => phase === 'home' && !buildMode && !itemsOpen && !showPanel() && !multi.length && repairCost() > 0;
 // Anything but trees can be put away in your items (between waves).
 const canStore = (b) => phase === 'home' && b && b.type !== 'tree';
 const storeButton = (b) => (BUILDINGS[b.type].run || BUILDINGS[b.type].decor ? buttons.storeTop : buttons.store);
@@ -1923,7 +1925,8 @@ function onUI(sx, sy) {
   const p = toUI(sx, sy);
   if (offer || menuOpen || shopOpen || lookOpen || runsOpen || settingsOpen || phase === 'end' || phase === 'title' || run.choices) return true;
   if (inRect(p, buttons.settings)) return true;
-  if (phase === 'home' && !showPanel()) { const { bar, tab } = itemsLayout(); if (inRect(p, tab) || (itemsOpen && inRect(p, bar))) return true; }
+  if (showMulti() && inRect(p, buttons.panel)) return true;
+  if (phase === 'home' && !showPanel() && !showMulti()) { const { bar, tab } = itemsLayout(); if (inRect(p, tab) || (itemsOpen && inRect(p, bar))) return true; }
   return p.y < HUD_H || p.y >= UH - BAR_H || inRect(p, buttons.zoomIn) || inRect(p, buttons.zoomOut)
     || (showRepair() && inRect(p, buttons.repair)) || (showPanel() && inRect(p, buttons.panel));
 }
@@ -2027,7 +2030,12 @@ function onTap(sx, sy) {
   if (inRect(p, buttons.zoomIn)) return zoomAt(viewW / 2, viewH / 2, cam.z * 1.5);
   if (inRect(p, buttons.zoomOut)) return zoomAt(viewW / 2, viewH / 2, cam.z / 1.5);
   // The ITEMS tab and bar.
-  if (phase === 'home' && !showPanel()) {
+  if (showMulti() && inRect(p, buttons.panel)) {
+    if (inRect(p, buttons.upgrade)) upgradeMulti();
+    else if (inRect(p, buttons.store)) storeMulti();
+    return;
+  }
+  if (phase === 'home' && !showPanel() && !showMulti()) {
     const { bar, tab } = itemsLayout();
     if (inRect(p, tab)) { itemsOpen = !itemsOpen; if (!itemsOpen) placingItem = null; selected = null; return; }
     if (itemsOpen && inRect(p, bar)) {
@@ -2073,11 +2081,135 @@ function onTap(sx, sy) {
     if (placing) { placing = null; return; }
     buildMode = !buildMode;
     selected = null;
-    showToast(buildMode ? 'BUILD MODE - TAP A BUILDING TO MOVE IT, ADD FOR NEW' : 'BACK TO EXPLORING');
+    showToast(buildMode ? 'DRAG BUILDINGS TO MOVE THEM - ADD FOR NEW' : 'BUILD MODE OFF');
     return;
   }
   if (p.y < HUD_H || p.y >= UH - BAR_H) return;
   onWorldTap(sx, sy);
+}
+
+// ---------- Dragging on the map: move buildings, lay and select lines of walls ----------
+// Between waves:
+//   placing walls (from ITEMS or the build menu): drag to lay a straight line of them;
+//   BUILD mode, press on a wall and drag: highlight a straight line of walls (then UPGRADE ALL or STORE ALL);
+//   BUILD mode, press on any other building and drag: move it (a ghost shows where it'll go).
+// Any other drag pans the camera, and a tap is still a tap.
+let multi = [];   // walls highlighted with a line select
+const tileAt = (sx, sy) => { const w = screenToWorld(sx, sy); return { c: Math.floor(w.x / T), r: Math.floor(w.y / T) }; };
+const placingWalls = () => (placingItem && isWallType(placingItem.type)) || placing === 'wall';
+
+function startEdit(sx, sy) {
+  if (phase !== 'home') return null;
+  const t = tileAt(sx, sy);
+  if (placingWalls()) return { mode: 'line', from: t, to: t };
+  if (!buildMode) return null;
+  const b = buildingAt(t.c, t.r);
+  if (!b || b.type === 'tree') return null;
+  if (isWallType(b.type)) return { mode: 'select', from: t, to: t };
+  return { mode: 'move', from: t, to: t, b, dc: t.c - b.c, dr: t.r - b.r };
+}
+
+// A straight line of tiles from a to b, along whichever way the drag went further.
+function lineTiles(a, b) {
+  const out = [];
+  if (Math.abs(b.c - a.c) >= Math.abs(b.r - a.r)) {
+    const s = Math.sign(b.c - a.c) || 1;
+    for (let c = a.c; c !== b.c + s; c += s) out.push({ c, r: a.r });
+  } else {
+    const s = Math.sign(b.r - a.r);
+    for (let r = a.r; r !== b.r + s; r += s) out.push({ c: a.c, r });
+  }
+  return out;
+}
+const lineSpotOk = (t) => ownsTile(t.c, t.r) && fits(null, t.c, t.r, 1);
+
+function finishEdit(e) {
+  if (e.mode === 'line') {
+    let n = 0;
+    for (const t of lineTiles(e.from, e.to)) {
+      if (!lineSpotOk(t)) continue;
+      if (placingItem) {
+        if (placeItem(placingItem, t.c, t.r)) n++;
+        if (!placingItem) break;   // ran out
+      } else {
+        if (buildBlock(game, 'wall')) break; // out of gold
+        const b = build(game, 'wall', t.c, t.r, clock());
+        const p = centerOf(b);
+        addPuff(p.x, p.y);
+        n++;
+      }
+    }
+    showToast(n ? `PLACED ${n} WALL${n > 1 ? 'S' : ''}` : 'NO ROOM THERE');
+  } else if (e.mode === 'select') {
+    multi = [...new Set(lineTiles(e.from, e.to).map((t) => buildingAt(t.c, t.r)).filter((b) => b && isWallType(b.type)))];
+    selected = null;
+    itemsOpen = false;
+  } else if (e.mode === 'move') {
+    const b = e.b, nc = e.to.c - e.dc, nr = e.to.r - e.dr;
+    if (fits(b, nc, nr)) {
+      b.c = nc; b.r = nr;
+      const p = centerOf(b);
+      addPuff(p.x, p.y);
+      selected = null;
+    } else showToast('NOT ENOUGH ROOM THERE');
+  }
+  saveGame();
+}
+
+// The preview while dragging: green tiles where things will go, red where they can't.
+function drawEditGhost(e) {
+  const box = (c, r, w, h, ok) => {
+    ctx.fillStyle = ok ? 'rgba(167,240,112,0.45)' : 'rgba(239,125,87,0.5)';
+    ctx.fillRect(c * T, r * T, w * T, h * T);
+    ctx.fillStyle = ok ? PAL.l : PAL.R;
+    ctx.fillRect(c * T, r * T, w * T, 1); ctx.fillRect(c * T, (r + h) * T - 1, w * T, 1);
+    ctx.fillRect(c * T, r * T, 1, h * T); ctx.fillRect((c + w) * T - 1, r * T, 1, h * T);
+  };
+  if (e.mode === 'line') {
+    let left = placingItem ? placingItem.n : Math.floor(game.gold / BUILD_COST.wall.gold);
+    for (const t of lineTiles(e.from, e.to)) { const ok = lineSpotOk(t) && left > 0; if (ok) left--; box(t.c, t.r, 1, 1, ok); }
+  } else if (e.mode === 'select') {
+    for (const t of lineTiles(e.from, e.to)) { const b = buildingAt(t.c, t.r); box(t.c, t.r, 1, 1, !!b && isWallType(b.type)); }
+  } else if (e.mode === 'move') {
+    const s = sizeOf(e.b), nc = e.to.c - e.dc, nr = e.to.r - e.dr;
+    box(nc, nr, s, s, fits(e.b, nc, nr));
+  }
+}
+
+// The walls you highlighted: upgrade them all, or put them all away.
+const showMulti = () => multi.length > 0 && phase === 'home';
+function upgradeMulti() {
+  let n = 0;
+  for (const w of [...multi].sort((a, b) => a.level - b.level)) {
+    if (upgradeBlock(game, w)) continue;
+    startUpgrade(game, w, clock());
+    n++;
+  }
+  showToast(n ? `UPGRADED ${n} WALLS` : 'NOT ENOUGH GOLD (OR ALL AT MAX)');
+  saveGame();
+}
+function storeMulti() {
+  let n = 0;
+  for (const w of multi) {
+    if (w.hp < maxHp(w) || !game.buildings.includes(w)) continue;
+    game.buildings.splice(game.buildings.indexOf(w), 1);
+    addItem(w.type, w.level || 1);
+    n++;
+  }
+  multi = [];
+  showToast(n ? `${n} WALLS PUT IN YOUR ITEMS` : 'FIX THEM FIRST');
+  saveGame();
+}
+function drawMultiPanel() {
+  const box = buttons.panel;
+  panelBox(box);
+  const x = box.x + 5, y = box.y + 5;
+  drawText(ctx, `${multi.length} WALL${multi.length > 1 ? 'S' : ''} SELECTED`, x, y, PAL.w);
+  const cost = multi.reduce((sum, w) => sum + (upgradeCost(w.type, w.level || 1)?.gold || 0), 0);
+  drawText(ctx, `UPGRADE ALL: ${cost}G`, x, y + 12, game.gold >= cost ? PAL.y : PAL.R);
+  drawText(ctx, 'TAP THE MAP TO DESELECT', x, y + 24, PAL.S);
+  drawButton(buttons.upgrade, 'UPGRADE ALL', 'primary');
+  drawButton(buttons.store, 'STORE ALL', 'normal');
 }
 
 // ---------- Touch & mouse: tap, drag to pan, pinch / wheel to zoom ----------
@@ -2097,11 +2229,13 @@ canvas.addEventListener('pointerdown', (e) => {
   if (pointers.size === 1) {
     const pu = toUI(e.clientX, e.clientY);
     const onBar = phase === 'home' && itemsOpen && inRect(pu, itemsLayout().bar);
-    drag = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y, moved: false, ui: onUI(e.clientX, e.clientY), bar: onBar, scroll0: itemsScroll };
+    const ui = onUI(e.clientX, e.clientY);
+    drag = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y, moved: false, ui, bar: onBar, scroll0: itemsScroll,
+      edit: ui ? null : startEdit(e.clientX, e.clientY) };
   } else if (pointers.size === 2) {
     const m = midpoint();
     pinch = { d0: Math.max(1, m.d), z0: cam.z, mid: m };
-    if (drag) drag.moved = true; // a pinch is never a tap
+    if (drag) { drag.moved = true; drag.edit = null; } // a pinch is never a tap (or a drag-edit)
   }
 });
 
@@ -2126,7 +2260,8 @@ canvas.addEventListener('pointermove', (e) => {
       const max = Math.max(0, game.items.length * (ITEM_SLOT + ITEM_GAP) + 8 - UW);
       itemsScroll = Math.max(0, Math.min(max, drag.scroll0 - (dx * dpr) / ui));
     }
-    if (drag.moved && !drag.ui) {
+    if (drag.moved && drag.edit) drag.edit.to = tileAt(e.clientX, e.clientY);
+    else if (drag.moved && !drag.ui) {
       cam.x = drag.camX - dx / cam.z;
       cam.y = drag.camY - dy / cam.z;
       clampCam();
@@ -2136,7 +2271,8 @@ canvas.addEventListener('pointermove', (e) => {
 
 function endPointer(e) {
   if (!pointers.has(e.pointerId)) return;
-  if (drag && !drag.moved && pointers.size === 1 && e.type === 'pointerup') onTap(e.clientX, e.clientY);
+  if (drag?.edit && drag.moved && pointers.size === 1 && e.type === 'pointerup') finishEdit(drag.edit);
+  else if (drag && !drag.moved && pointers.size === 1 && e.type === 'pointerup') onTap(e.clientX, e.clientY);
   pointers.delete(e.pointerId);
   if (pointers.size < 2) pinch = null;
   if (pointers.size === 1) {
@@ -2499,7 +2635,7 @@ function drawInfoPanel(b, now) {
   drawText(ctx, title, x, y, PAL.w);
   if (canStore(b)) drawButton(storeButton(b), 'STORE', b.hp >= maxHp(b) && !underConstruction(game, b) ? 'normal' : 'off');
   if (buildMode) {
-    drawText(ctx, 'TAP GRASS TO MOVE IT HERE', x, y + 12, PAL.y);
+    drawText(ctx, 'DRAG IT, OR TAP GRASS TO MOVE IT THERE', x, y + 12, PAL.y);
     drawText(ctx, 'OR STORE IT IN YOUR ITEMS', x, y + 24, PAL.S);
     return;
   }
@@ -2686,6 +2822,8 @@ function render(time, dt) {
 
   drawShots();
   if (selected) drawSelection(selected, time);
+  for (const w of multi) drawSelection(w, time);
+  if (drag?.edit && drag.moved) drawEditGhost(drag.edit);
   // Attack ranges: the selected tower's, and the hero's while you're giving them orders.
   if (selected && phase !== 'end') {
     const rr = rangeOf(selected);
@@ -2780,6 +2918,7 @@ function render(time, dt) {
   drawButton(buttons.zoomOut);
   if (showRepair()) drawButton(buttons.repair, `REPAIR ${repairCost()}G`, game.gold > 0 ? 'good' : 'off');
   if (showPanel()) drawInfoPanel(selected, now);
+  else if (showMulti()) drawMultiPanel();
 
   // Bottom bar
   ctx.fillStyle = PAL.k;
@@ -2787,11 +2926,11 @@ function render(time, dt) {
   let hint;
   if (movingHero) hint = 'TAP WHERE YOUR HERO SHOULD STAND GUARD';
   else if (phase === 'wave') hint = `WAVE ${run.wave} - ${battle.remaining} ZOMBIES LEFT`;
-  else if (placingItem) hint = `TAP YOUR LAND TO PLACE ${BUILDINGS[placingItem.type].name.toUpperCase()}${placingItem.n > 1 ? ` (${placingItem.n} LEFT)` : ''}`;
+  else if (placingItem) hint = `${isWallType(placingItem.type) ? 'TAP OR DRAG A LINE TO PLACE' : 'TAP YOUR LAND TO PLACE'} ${BUILDINGS[placingItem.type].name.toUpperCase()}${placingItem.n > 1 ? ` (${placingItem.n} LEFT)` : ''}`;
   else if (placing) hint = `TAP YOUR LAND TO PLACE A ${BUILDINGS[placing].name.toUpperCase()}`;
   else if (phase === 'home' && !buildMode) hint = isKingWave(run.wave + 1) ? `WAVE ${run.wave + 1} IS A KING WAVE - GET READY` : `WAVE ${run.wave + 1} NEXT - BUILD, THEN START IT`;
-  else if (buildMode && selected) hint = 'TAP GRASS TO MOVE IT HERE';
-  else if (buildMode) hint = 'BUILD MODE - TAP A BUILDING TO MOVE IT';
+  else if (buildMode && selected) hint = 'DRAG IT, OR TAP GRASS TO MOVE IT THERE';
+  else if (buildMode) hint = 'DRAG TO MOVE - DRAG ACROSS WALLS TO SELECT';
   else hint = 'TAP A BUILDING - DRAG TO LOOK AROUND';
   centeredText(hint, UH - BAR_H + 4, phase === 'wave' ? PAL.R : placing ? PAL.y : PAL.s);
   if (phase === 'home') drawButton(buttons.left, buildMode || placingItem ? 'DONE' : 'BUILD', buildMode || placingItem ? 'good' : 'normal');
@@ -2803,7 +2942,7 @@ function render(time, dt) {
     drawButton(buttons.main, label, ready ? 'primary' : 'off');
   } else drawButton(buttons.main, 'SURVIVE...', 'off');
 
-  if (phase === 'home' && !run.choices && !showPanel()) drawItems(); // the info panel covers it
+  if (phase === 'home' && !run.choices && !showPanel() && !showMulti()) drawItems(); // the info panels cover it
   if (menuOpen) drawBuildMenu();
   if (shopOpen) drawShop();
   if (lookOpen) drawLook(time);

@@ -11,6 +11,10 @@ See DESIGN.md's "v2 DESIGN" section. The House is gone, along with every House g
 - The village is data: `SHOPS` (with w/h and keepers), `HOMES`, `PROPS` and art in `js/art-village.js` `VILLAGE_ART`/`villageRows`.
 - `economy.js` has no limits. `config.js` has no `LIMITS`, `storageCap` or `npcCap`. Fighters scale with `waveLevel(run.wave)`.
 - Settings popup: `onSettingsTap`, `restartRun`, `drawSettings`, `drawGear`.
+- Dragging on the map (`startEdit`, `finishEdit`, `drawEditGhost`, `lineTiles`):
+  - while placing walls, a drag lays a straight line;
+  - in BUILD mode, dragging a building moves it, and dragging across walls highlights them (`multi`).
+  - The highlighted walls get a panel with UPGRADE ALL / STORE ALL (`upgradeMulti`, `storeMulti`, `drawMultiPanel`).
 - Wherever section 0 below mentions the House, the House cap or House levels, that's out of date.
 
 ## 0. READ FIRST: the roguelike pivot (later on 2026-10-06; this overrides older sections below)
