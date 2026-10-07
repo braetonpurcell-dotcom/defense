@@ -25,7 +25,7 @@
   <button id="run">Run all bots</button>
   <label>Seasons each <input id="seasons" type="number" value="3" min="1" max="20"></label>
   <span id="status"></span>
-  <table id="out"><thead><tr><th>Bot</th><th>Run</th><th>Omen</th><th>Cleared</th><th>Earned</th><th>Gold</th><th>House</th><th>Land</th><th>Run length</th></tr></thead><tbody></tbody></table>
+  <table id="out"><thead><tr><th>Bot</th><th>Run</th><th>Omen</th><th>Cleared</th><th>Earned</th><th>Gold</th><th>Towers</th><th>Land</th><th>Run length</th></tr></thead><tbody></tbody></table>
   <table id="summary"><thead><tr><th>Bot</th><th>Avg cleared</th><th>Best</th><th>Worst</th><th>Wins</th></tr></thead><tbody></tbody></table>
   <iframe id="game" src="../index.html?bots=1"></iframe>
   <script type="module">
@@ -51,7 +51,7 @@
         const rows = await playSeasons(d, bot, seasons, (r) => {
           const tr = document.createElement('tr');
           tr.innerHTML = `<td>${bot.name}</td><td>${r.season}</td><td>${r.omen}</td><td class="${r.won ? 'won' : 'lost'}">${r.cleared}/10</td>`
-            + `<td>+${r.earned}</td><td>${r.gold}</td><td>LV ${r.house}</td><td>${r.land}</td><td>${r.minutes} min</td>`;
+            + `<td>+${r.earned}</td><td>${r.gold}</td><td>${r.towers}</td><td>${r.land}</td><td>${r.minutes} min</td>`;
           tbody.append(tr);
         });
         const cleared = rows.map((r) => r.cleared);

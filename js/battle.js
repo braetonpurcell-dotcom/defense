@@ -1,6 +1,6 @@
 // A wave in progress: monsters, towers shooting, traps, run-card effects.
 //
-// Monsters follow a "flow field": every walkable tile knows how costly it is to reach the House
+// Monsters follow a "flow field": every walkable tile knows how costly it is to reach the village
 // (or a Scarecrow decoy) from there. Open ground costs 1 per tile; a tile with a building costs more
 // the more health it has, so monsters walk around walls when there's a way and smash through when there isn't.
 // Traps are walkable: monsters step on them.
@@ -49,11 +49,12 @@ function makeHeap() {
 }
 
 const isTrap = (b) => !!BUILDINGS[b.type].trap;
-const isGoal = (b) => b.type === 'house' || CARDS[b.type]?.decoy;
+const isGoal = (b) => !!CARDS[b.type]?.decoy; // a Scarecrow draws them in (the village is the other goal)
 const tileCenter = (c, r) => ({ x: c * T + T / 2, y: r * T + T / 2 });
 
 export class Battle {
-  // world: { buildings(), house(), walkable(c, r), cave() -> {c, r}, onKill(monster), onDestroyed(building),
+  // world: { buildings(), goals() -> [{c, r}] (the village entrance), walkable(c, r), cave() -> {c, r},
+  //          onKill(monster), onDestroyed(building), onBreakthrough(monster),
   //          maxHp(building), run() -> { blessings, omen } }
   constructor(world) {
     this.w = world;
@@ -66,7 +67,7 @@ export class Battle {
     this.effects = [];   // short-lived visuals: zaps, blasts, bursts
     this.queue = [];
     this.active = false;
-    this.houseLost = false;
+    this.villageLost = false;
     this.wave = 0;
     this.time = 0;
     this.spawnCount = 0;
@@ -83,11 +84,11 @@ export class Battle {
 
   startWave(n) {
     this.wave = n;
-    this.houseLevel = waveLevel(n); // zombie scaling follows the wave, not your House
+    this.level = waveLevel(n); // zombie scaling follows the wave
     this.queue = waveList(n, this.mods.omen);
     this.spawnClock = 0.5;
     this.active = true;
-    this.houseLost = false;
+    this.villageLost = false;
     this.recomputeFlow();
   }
 
@@ -95,7 +96,7 @@ export class Battle {
   get cleared() { return this.active && this.remaining === 0; }
 
   recomputeFlow() {
-    // Every tile a standing building covers (the House covers 3×3). Traps don't block.
+    // Every tile a standing building covers. Traps don't block.
     const bmap = new Map();
     for (const b of this.w.buildings()) {
       if (b.hp <= 0 || isTrap(b)) continue;
@@ -112,8 +113,10 @@ export class Battle {
       return b && !isGoal(b) ? 1 + b.hp * DETOUR_PER_HP : 1;
     };
     this.enterCost = enterCost;
-    // Every House tile (and any Scarecrow) is a goal.
+    // The village entrance (and any Scarecrow) is a goal.
     const heap = makeHeap();
+    this.goalSet = new Set();
+    for (const g of this.w.goals()) { const i = g.r * N + g.c; dist[i] = 0; heap.push(0, i); this.goalSet.add(i); }
     for (const b of this.w.buildings()) {
       if (!isGoal(b) || b.hp <= 0) continue;
       const s = sizeOf(b);
@@ -158,9 +161,9 @@ export class Battle {
     const def = MONSTERS[type];
     const cave = this.w.cave();
     const c = cave.c + (this.spawnCount++ % 2);
-    const hp = Math.round(def.hp * hpScale(this.wave, this.houseLevel) * (this.mods.omen.hpMul || 1));
+    const hp = Math.round(def.hp * hpScale(this.wave, this.level) * (this.mods.omen.hpMul || 1));
     this.monsters.push({
-      type, def, hp, maxHp: hp, damage: Math.round(def.damage * damageScale(this.houseLevel)),
+      type, def, hp, maxHp: hp, damage: Math.round(def.damage * damageScale(this.level)),
       c, r: cave.r, x: c * T + T / 2, y: cave.r * T + T / 2,
       next: null, atk: 0.3, flash: 0, t: Math.random() * 10, attacking: null,
       slowUntil: 0, slowMul: 1, poison: 0, stun: 0, dead: false,
@@ -190,7 +193,7 @@ export class Battle {
         mul = Math.min(mul, 1 - CARDS.tar.slow * CARD_POWER);
       }
     }
-    return m.def.speed * Math.max(0.15, mul);
+    return m.def.speed * (this.mods.omen.speedMul || 1) * Math.max(0.15, mul);
   }
 
   updateMonster(m, dt) {
@@ -232,6 +235,7 @@ export class Battle {
     const step = this.speedOf(m) * dt;
     if (d <= step) {
       m.x = tx; m.y = ty; m.c = m.next.c; m.r = m.next.r; m.next = null;
+      if (this.goalSet.has(m.r * N + m.c)) { this.breakthrough(m); return; }
       this.stepOnTraps(m);
     } else {
       m.x += (dx / d) * step;
@@ -268,19 +272,23 @@ export class Battle {
   hitBuilding(b, damage) {
     b.hp = Math.max(0, b.hp - damage);
     this.flash.set(b, 0.12);
-    // Second Wind: the first time the House drops below half, everything is stunned and it heals.
-    if (b.type === 'house' && b.hp > 0 && this.mods.blessings.secondwind && !this.secondWindUsed
-      && b.hp < this.w.maxHp(b) * 0.5) {
-      this.secondWindUsed = true;
-      b.hp = Math.min(this.w.maxHp(b), b.hp + 100);
-      for (const m of this.monsters) m.stun = 3;
-      const p = { x: (b.c + 1.5) * T, y: (b.r + 1.5) * T };
-      this.effects.push({ kind: 'blast', x: p.x, y: p.y, r: 5 * T, t: 0, life: 0.6, color: 'w' });
-    }
     if (b.hp > 0) return;
     this.w.onDestroyed(b);
-    if (b.type === 'house') this.houseLost = true;
-    else this.recomputeFlow();
+    this.recomputeFlow();
+  }
+
+  // A zombie reached the village. That's the run over - unless Second Wind is still unused: then that
+  // zombie drops dead and every other one is stunned for 3 seconds.
+  breakthrough(m) {
+    if (this.mods.blessings.secondwind && !this.secondWindUsed) {
+      this.secondWindUsed = true;
+      for (const o of this.monsters) o.stun = 3;
+      this.effects.push({ kind: 'blast', x: m.x, y: m.y, r: 5 * T, t: 0, life: 0.6, color: 'w' });
+      this.hitMonster(m, m.hp + 1);
+      return;
+    }
+    this.villageLost = true;
+    this.w.onBreakthrough?.(m);
   }
 
   // Stats for anything that shoots, with run blessings and the omen applied.
@@ -334,7 +342,7 @@ export class Battle {
       let target = null, best = Infinity;
       for (const m of this.monsters) {
         if (m.dead || Math.hypot(m.x - cx, m.y - cy) > def.range) continue;
-        const progress = this.dist[m.r * N + m.c]; // lower = closer to the House
+        const progress = this.dist[m.r * N + m.c]; // lower = closer to the village
         if (progress < best) { best = progress; target = m; }
       }
       if (!target) continue;

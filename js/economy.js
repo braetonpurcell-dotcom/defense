@@ -1,16 +1,14 @@
 // The base-building economy: gold (the only money - you earn it killing zombies), building and upgrading
-// (with the builder's timer) and House-level limits.
+// (with the builder's timer). v2: no limits, gold is the only one.
 // Everything takes `game` (the save object) and `now` (game-clock milliseconds), so it can be tested.
 
 import {
-  MAX_LEVEL, BUILD_COST, upgradeCost, limitFor, hpFor, storageCap,
+  MAX_LEVEL, BUILD_COST, upgradeCost, hpFor,
 } from './config.js';
 
 export const RES = ['gold'];
 const SHORT = { gold: 'G' };
 
-export const houseOf = (game) => game.buildings.find((b) => b.type === 'house');
-export const houseLevel = (game) => houseOf(game).level || 1;
 // How many you own: on the map plus any put away in your items (so storing things never gets you extra).
 export const countOf = (game, type) => game.buildings.filter((b) => b.type === type).length
   + (game.items || []).filter((i) => i.type === type).reduce((sum, i) => sum + i.n, 0);
@@ -29,10 +27,9 @@ export function formatTime(seconds) {
   return `${Math.floor(s / 86400)}D ${Math.floor((s % 86400) / 3600)}H`;
 }
 
-// Add resources, but never past what the House can store. Returns how much actually went in.
+// Add resources. Returns how much went in.
 export function earn(game, res, amount) {
-  const cap = storageCap(houseLevel(game))[res];
-  const take = Math.max(0, Math.min(amount, cap - (game[res] || 0)));
+  const take = Math.max(0, amount);
   game[res] = (game[res] || 0) + take;
   return take;
 }
@@ -41,12 +38,6 @@ export function earn(game, res, amount) {
 
 // Why can't you build another of this type? null = you can.
 export function buildBlock(game, type) {
-  const limit = limitFor(type, houseLevel(game));
-  if (limit === 0) {
-    const need = [...Array(MAX_LEVEL).keys()].map((i) => i + 1).find((lv) => limitFor(type, lv) > 0);
-    return `NEEDS HOUSE LV ${need}`;
-  }
-  if (countOf(game, type) >= limit) return `LIMIT ${limit} - UPGRADE HOUSE`;
   const cost = BUILD_COST[type];
   if (!canAfford(game, cost)) return `NOT ENOUGH ${missing(game, cost).toUpperCase()}`;
   return null;
@@ -69,7 +60,6 @@ export function upgradeBlock(game, b) {
   const cost = upgradeCost(b.type, b.level || 1);
   if (!cost) return b.level >= MAX_LEVEL ? 'MAX LEVEL' : 'CANNOT UPGRADE';
   if (b.hp <= 0) return 'REPAIR IT FIRST';
-  if (b.type !== 'house' && b.level >= houseLevel(game)) return `NEEDS HOUSE LV ${b.level + 1}`;
   if (underConstruction(game, b)) return 'UPGRADING';
   if (cost.time > 0 && game.builder) return 'BUILDER IS BUSY';
   if (!canAfford(game, cost)) return `NOT ENOUGH ${missing(game, cost).toUpperCase()}`;
@@ -79,7 +69,7 @@ export function upgradeBlock(game, b) {
 function levelUp(game, b) {
   const wasFull = b.hp >= hpFor(b.type, b.level);
   b.level++;
-  if (wasFull || b.type === 'house') b.hp = hpFor(b.type, b.level);
+  if (wasFull) b.hp = hpFor(b.type, b.level);
 }
 
 // Pay and start. Walls finish instantly; everything else hands the job to the builder.

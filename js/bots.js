@@ -54,13 +54,11 @@ function hire(d) {
   for (const { i } of board) d.hireApplicant(i);
 }
 
-// Spend on upgrades: House first (it unlocks everything), then towers, then walls.
+// Spend on upgrades: towers first, then walls (the lowest level first).
 function upgradeBase(d) {
   const g = d.game;
-  const house = g.buildings.find((b) => b.type === 'house');
-  if (!g.builder) d.upgrade(house);
   for (const t of g.buildings.filter((b) => b.type === 'tower')) if (!g.builder) d.upgrade(t);
-  const wall = g.buildings.find((b) => b.type === 'wall' && b.level < house.level);
+  const wall = [...g.buildings].filter((b) => b.type === 'wall').sort((a, b) => a.level - b.level)[0];
   if (wall) d.upgradeAllWalls(wall.level);
 }
 
@@ -81,11 +79,14 @@ export async function playSeasons(d, bot, lives, onSeason) {
   const rows = [];
   for (let life = 1; life <= lives; life++) {
     d.resetGame();
-    let secs = 0;
+    let secs = 0, homeSecs = 0;
     while (d.phase !== 'end' && secs < 4000) {
       if (d.phase === 'home') {
+        // Between waves: pick the card, look after the base, then start the next wave after 20 seconds.
         handleCards(d, bot);
-        if (secs % 15 === 0) { d.collectAll(); bot.atHome(d, life); if (bot.hires) hire(d); }
+        homeSecs++;
+        if (homeSecs === 5) { bot.atHome(d, life); if (bot.hires) hire(d); }
+        if (homeSecs >= 20) { homeSecs = 0; d.nextWave(); }
       }
       d.step(1);
       secs++;
@@ -98,7 +99,7 @@ export async function playSeasons(d, bot, lives, onSeason) {
       earned: d.run.earned,
       gold: d.game.gold,
       land: d.game.owned.length,
-      house: d.game.buildings.find((b) => b.type === 'house').level,
+      towers: d.game.buildings.filter((b) => b.type === 'tower').length,
       minutes: Math.round(secs / 60),
     };
     rows.push(row);

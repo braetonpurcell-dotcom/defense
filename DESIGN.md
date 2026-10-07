@@ -271,3 +271,26 @@ Owner decisions, in order. HANDOFF.md section 0 has the details.
 ## Endless (2026-10-06, latest)
 No more worlds: endless waves, a King every 10th wave (and more after that), and the goal is to get as far as possible. Each run is saved to TOP RUNS on a new home screen (PLAY / TOP RUNS). Death wipes the save, but top runs, lives, gems and cosmetics stay.
 
+
+## v2 DESIGN (2026-10-06, latest): defend the village
+Owner: "get rid of the house we are now protecting the village from zombies the starter plot is now near the path. fully develope the village. we are the last line of defense. if 1 zombie gets through the path and out of range then we lose."
+Owner's answers:
+- v2 replaces v1 now.
+- **No limits:** no House means no level gates, no storage cap, no people cap. Gold is the only limit.
+- Start plot just before the village bridge.
+- Walls may go on the path; zombies smash them or go around.
+
+What was built:
+- **The path:** zombies walk from the den down the winding path through the forest, straight down through your land and over the bridge. The first one to step off the bridge into the village ends the run. Second Wind now kills the first zombie that gets through instead.
+- **Your start:** the 4 plots just above the bridge, astride the path. You get 2 manned archer towers and 12 walls in your ITEMS. More land is bought plot by plot as before.
+- **Guard point:** the middle of your starting land. Fighters defend around it, new hires walk to it, and the hero starts there.
+- **The village:**
+  - Along the river: the Pet Shop, General Store and Tavern.
+  - The plaza: the well, two market stalls and lamps.
+  - The **Blacksmith** sells building kits into your items: walls x10, an archer tower kit, spike pits, barricades.
+  - The **Chapel** offers a prayer: +1 card reroll this run for 50G.
+  - Ten family **cottages** line the main street, with lamps and flower gardens.
+  - The **Town Hall** sits at the end of the street. The mayor shows your goals.
+  - Ten townsfolk wander the village and go indoors during waves.
+- **Settings gear** (top right): CONTINUE, RESTART (3 taps within 4 s; the run still counts) and TOP RUNS. The game pauses while it's open.
+- **Save:** key `defense.save.v5`. A v1 save passes on top runs, lives, gems, art packs and look.

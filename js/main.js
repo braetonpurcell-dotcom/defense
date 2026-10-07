@@ -4,7 +4,6 @@ import {
   mountainRows, peakRows, oceanRows, dangerRows, deadTreeRows, meadowRows, bridgeRows,
 } from './art.js';
 import { wallRows, WALL_N, WALL_E, WALL_S, WALL_W } from './art-walls.js';
-import { houseRows, HOUSE_LEVELS } from './art-houses.js';
 import { buildingRows, towerPalette, towerRows, TOWER_H } from './art-buildings.js';
 import { THEMES, themeById, themePalette, decorRows } from './art-decor.js';
 import { hasCardArt, cardRows } from './art-cards.js';
@@ -12,42 +11,52 @@ import { heroRows, heroPalette, HERO_DEFAULT, LOOK_PARTS } from './art-hero.js';
 import { rowsToCanvas, drawText, textWidth } from './gfx.js';
 import {
   T, CHUNK, CHUNKS, N, NR, WORLD, WORLD_H, WORLD_MAP, LAND0, LAND1, START_GOLD, landPrice, BOSS_EVERY, TOP_RUNS, BUILDINGS, waveBonus, killGold, sizeOf,
-  hpFor, towerStats, storageCap, limitFor, upgradeCost, BUILD_COST,
+  hpFor, towerStats, upgradeCost, BUILD_COST,
   MAX_LEVEL, DECOR, CARDS, RARITY, rarityOdds, SKIP_GOLD, OMENS, gemsForRun,
-  PETS, PET_MEAL, PET_FED_HOURS, STORE_ITEMS, NPC_ROLES, npcCap, BUILDER_REPAIR_PER_SEC, GOALS, HERO_MAX_LEVEL, heroStats, heroUpgradeCost, TIME_SCALE, WAVE_HEAL, fighterScale, GUARD_RADIUS, APPLICANTS, REROLL_PRICE, TRAITS, NPC_NAMES,
+  PETS, PET_MEAL, PET_FED_HOURS, STORE_ITEMS, BLACKSMITH_GOODS, CHAPEL_PRAYER, NPC_ROLES, BUILDER_REPAIR_PER_SEC, GOALS, HERO_MAX_LEVEL, heroStats, heroUpgradeCost, TIME_SCALE, fighterScale, waveLevel, GUARD_RADIUS, APPLICANTS, REROLL_PRICE, TRAITS, NPC_NAMES,
 } from './config.js';
-import { shopRows, wellRows, petRows } from './art-village.js';
+import { villageRows, wellRows, petRows } from './art-village.js';
 import {
-  RES, houseLevel, countOf, canAfford, missing, formatCost, formatTime, earn, buildBlock, build,
+  RES, countOf, canAfford, missing, formatCost, formatTime, earn, buildBlock, build,
   underConstruction, upgradeBlock, startUpgrade, finishBuilder, rushBuilder,
 } from './economy.js';
 import { Battle } from './battle.js';
 
 // ---------- World ----------
-// The owner's valley (WORLD_MAP in config.js, 24×24 plots): zombie country to the north, a forest band the
-// zombie road cuts through, your 8×8 buyable land in the middle, mountains west, ocean east, a river with a
-// bridge to the south, and the open world (village) at the bottom.
-// You start owning the middle four plots of your land; the rest of your land is forest you can buy.
+// The owner's valley (WORLD_MAP in config.js, 24×24 plots): zombie country to the north, a forest band, your
+// 8×8 buyable land in the middle, mountains west, ocean east, a river with a bridge to the south, and the
+// village (the open world) at the bottom.
+// v2: there's no House. You're the last line of defense for the village: the zombies walk the path from their
+// den all the way down to the bridge, and if ONE of them gets over it into the village, the run is over.
+// You start with the four plots just above the bridge, with the path running through the middle of them.
 
 // Your land starts at tile O (= plot LAND0). Positions below are written as O + their place in the land.
 const O = LAND0 * CHUNK; // 48
-const START_CHUNKS = [[LAND0 + 3, LAND0 + 3], [LAND0 + 4, LAND0 + 3], [LAND0 + 3, LAND0 + 4], [LAND0 + 4, LAND0 + 4]];
+const START_CHUNKS = [[LAND0 + 3, LAND1 - 1], [LAND0 + 4, LAND1 - 1], [LAND0 + 3, LAND1], [LAND0 + 4, LAND1]];
+const START_TOP = (LAND1 - 1) * CHUNK; // 84: the top of your starting plots
 
 // (Clamped, so wiggly borders near the world's edge keep the edge plot's ground.)
 const plotType = (px, py) => WORLD_MAP[Math.max(0, Math.min(WORLD_MAP.length - 1, py))][Math.max(0, Math.min(WORLD_MAP[0].length - 1, px))];
 const isLandPlot = (px, py) => px >= LAND0 && px <= LAND1 && py >= LAND0 && py <= LAND1;
 
-// The zombie road: 2 tiles wide, from the zombies' den in the danger zone, down through the forest band,
-// winding through the top of your land to the top of your starting plots.
-const BASE_TOP = START_CHUNKS.reduce((m, [, y]) => Math.min(m, y), Infinity) * CHUNK; // 66
+// The river: runs east–west through the river band below your land (rows 96–107), from the mountains to the
+// ocean, 3 tiles wide and gently winding. The path crosses it on a wooden bridge.
+const RIVER_TOP = (LAND1 + 1) * CHUNK, RIVER_BOTTOM = RIVER_TOP + 2 * CHUNK - 1; // 96..107
+const riverCentre = (c) => RIVER_TOP + 5.5 + 2.5 * Math.sin(c * 0.09);
+const PATH_COLS = [O + 23, O + 24];        // the path runs straight down these two columns once it's out of the forest
+
+// The zombie path: 2 tiles wide, from the zombies' den in the danger zone, winding down through the forest
+// band, then straight down through your land to the bridge.
+const WIGGLE_END = (LAND0 + 3) * CHUNK;    // 66: below this the path runs straight
 const ROAD_TOP = 33;                       // a few tiles inside the danger zone (which ends at row 35)
-const roadLeft = (r) => O + 23 + Math.round(1.4 * Math.sin((BASE_TOP - 1 - r) * 0.45));
+const roadLeft = (r) => (r >= WIGGLE_END ? O + 23 : O + 23 + Math.round(1.4 * Math.sin((WIGGLE_END - 1 - r) * 0.45)));
 const ROAD = new Set();
-for (let r = ROAD_TOP; r < BASE_TOP; r++) for (const c of [roadLeft(r), roadLeft(r) + 1]) ROAD.add(`${c},${r}`);
-const isRoad = (c, r) => ROAD.has(`${c},${r}`);
+for (let r = ROAD_TOP; r < RIVER_TOP + 2 * CHUNK; r++) for (const c of [roadLeft(r), roadLeft(r) + 1]) ROAD.add(`${c},${r}`);
+// The path stops at the river (the bridge carries it over) and its last bit is the village entrance.
+const isRoad = (c, r) => ROAD.has(`${c},${r}`) && r < villageGateRow() && !isRiver(c, r);
 const DANGER_BOTTOM = 36;                  // rows above this are zombie country (you can't go there)
 
-// The zombies' den sits at the top of the road, centred on its two tiles.
+// The zombies' den sits at the top of the path, centred on its two tiles.
 const CAVE = { x: roadLeft(ROAD_TOP) * T + T / 2, y: ROAD_TOP * T, c: roadLeft(ROAD_TOP), r: ROAD_TOP };
 const isCave = (c, r) => r === ROAD_TOP && (c === CAVE.c || c === CAVE.c + 1);
 
@@ -67,35 +76,21 @@ const nextToWater = (c, r, size = 1) => {
   return false;
 };
 
-// The river: runs east–west through the river band below your land (rows 96–107), from the mountains to the
-// ocean, 3 tiles wide and gently winding. The path crosses it on a wooden bridge.
-const RIVER_TOP = (LAND1 + 1) * CHUNK, RIVER_BOTTOM = RIVER_TOP + 2 * CHUNK - 1; // 96..107
-const riverCentre = (c) => RIVER_TOP + 5.5 + 2.5 * Math.sin(c * 0.09);
-const PATH_COLS = [O + 23, O + 24];        // the path south runs down these two columns (between plots 4 and 5)
-
 const chunkKey = (cx, cy) => `${cx},${cy}`;
 const chunkOfTile = (c, r) => [Math.floor(c / CHUNK), Math.floor(r / CHUNK)];
 
-// Starting layout, centred on the four starting plots.
-// The 3×3 House sits in the middle. A 7×7 wall ring surrounds it, with a 1-tile gate at the bottom
-// (away from the road, so monsters have to walk around), and a tower in each bottom corner covering the
-// gate.
-const HOUSE_AT = { c: O + 23, r: O + 23 };
-const GATE = { c: O + 24, r: O + 27 };
-const RING = [];
-for (let i = O + 21; i <= O + 27; i++) {
-  RING.push([i, O + 21]);                       // top row
-  if (i !== GATE.c) RING.push([i, O + 27]);     // bottom row, with the gate
-  if (i > O + 21 && i < O + 27) RING.push([O + 21, i], [O + 27, i]); // sides
-}
-const DEFAULT_BUILDINGS = [
-  { type: 'house', ...HOUSE_AT },
-  ...RING.map(([c, r]) => ({ type: 'wall', c, r })),
-  { type: 'tower', c: O + 22, r: O + 26 },
-  { type: 'tower', c: O + 26, r: O + 26 },
-  ...[[18, 18], [29, 18], [18, 29], [29, 29]].map(([c, r]) => ({ type: 'tree', c: O + c, r: O + r })),
-];
+// The guard point: the middle of your starting land, on the path just above the bridge. Fighters meet zombies
+// within GUARD_RADIUS of it, new hires walk here, and the hero stands guard here until you move them.
+const GUARD_POINT = { c: O + 23, r: START_TOP + 7 };
 
+// Starting layout: an archer tower on each side of the path, a couple of trees. You also start with walls in
+// your items (see newGame) to design the first defense yourself.
+const DEFAULT_BUILDINGS = [
+  { type: 'tower', c: O + 20, r: START_TOP + 4 },
+  { type: 'tower', c: O + 27, r: START_TOP + 4 },
+  ...[[18, START_TOP - O], [29, START_TOP - O]].map(([c, r]) => ({ type: 'tree', c: O + c, r: O + r })),
+];
+const START_ITEMS = [{ type: 'wall', level: 1, n: 12 }];
 // The current run (roguelike layer). Lives only in memory: it is never saved.
 const run = {
   wave: 0, earned: 0, won: false,
@@ -116,11 +111,11 @@ const realTime = (gameSeconds) => formatTime(gameSeconds / TIME_SCALE);
 
 // ---------- Save ----------
 
-const SAVE_KEY = 'defense.save.v4';
+const SAVE_KEY = 'defense.save.v5'; // v5 = the v2 design (no House, defend the village)
 // Sandbox: the bot testers load the game with ?bots=1, which must never touch the real save.
 const SANDBOX = new URLSearchParams(location.search).has('bots');
-// Saves from before the 3×3 House: keep gold and land, start from the new layout.
-const OLD_SAVE_KEYS = ['defense.save.v3', 'defense.save.v2'];
+// The v1 save (the House design): v2 starts fresh but keeps what outlives a death (top runs, gems, art, look).
+const V1_SAVE_KEY = 'defense.save.v4';
 
 function newGame() {
   return {
@@ -128,13 +123,11 @@ function newGame() {
     bought: 0,
     owned: START_CHUNKS.map(([x, y]) => chunkKey(x, y)),
     buildings: structuredClone(DEFAULT_BUILDINGS),
+    items: structuredClone(START_ITEMS),
     builder: null,
     theme: 'classic',
     gems: 0,
     ownedThemes: ['classic'],
-    // New games are already in today's shape; older saves get migrated in upgradeSave.
-    southGate: true,
-    worldV: 2,
     clock: Date.now(),
     runState: null,
   };
@@ -142,8 +135,6 @@ function newGame() {
 
 // Fill in anything a save is missing.
 function upgradeSave(s) {
-  // Gold is the only money now: quarries, farms, labs and docks (and food and science) are gone.
-  delete s.food; delete s.science; delete s.starterProducers;
   s.buildings = s.buildings.filter((b) => BUILDINGS[b.type]);
   if (Array.isArray(s.npcs)) s.npcs = s.npcs.filter((n) => NPC_ROLES[n.role]);
   s.builder ??= null;
@@ -160,45 +151,22 @@ function upgradeSave(s) {
     b.id ??= s.nextId++;
     b.level ??= 1;
     if (typeof b.hp !== 'number') b.hp = hpFor(b.type, b.level);
-    if (b.type === 'house' || b.type === 'tree' || BUILDINGS[b.type].decor) b.hp = hpFor(b.type, b.level); // safety net
+    if (b.type === 'tree' || BUILDINGS[b.type].decor) b.hp = hpFor(b.type, b.level); // safety net
   }
-  // Your people. Older saves get two archers, manning the first two towers (the old plain villagers).
+  // Your people. A new game starts with two archers, one in each starting tower.
   s.nextNpc ??= 1;
   if (!Array.isArray(s.npcs)) {
     s.npcs = s.buildings.filter((b) => b.type === 'tower').slice(0, 2).map((t) => ({ id: s.nextNpc++, role: 'archer', post: t.id }));
-    while (s.npcs.length < 2) s.npcs.push({ id: s.nextNpc++, role: 'archer', post: null });
   }
-  for (const n of s.npcs) n.name ??= NPC_NAMES[(n.id * 7) % NPC_NAMES.length]; // everyone has a name now
+  for (const n of s.npcs) n.name ??= NPC_NAMES[(n.id * 7) % NPC_NAMES.length];
   s.stats ??= { bestWave: 0, wins: 0 };
   s.goal ??= 0;
   s.hero ??= { level: 1, post: null }; // your hero (a mobile tower)
   s.items ??= []; // your inventory: cards and buildings not on the map ({ type, level, n })
-  // Roguelike: the current run (saved, so you can close the app between waves).
-  delete s.dayLeft;
-  s.runState ??= null;
+  s.runState ??= null; // the current run (saved, so you can close the app between waves)
   // Records outlive every death: lives played and your top runs (shown on the home screen).
   s.records ??= { lives: 1 };
   s.records.runs ??= [];
-  delete s.records.bestWorld; delete s.records.bestNight; delete s.world;
-  // The starting gate moved from the top of the ring (24,21) to the bottom (24,27).
-  if (!s.southGate) {
-    const at = (c, r) => s.buildings.find((b) => b.c === c && b.r === r);
-    const bottom = at(24, 27);
-    if (!at(24, 21) && bottom && bottom.type === 'wall') { bottom.r = 21; }
-    // ...and the starting towers moved down next to it.
-    for (const c of [22, 26]) {
-      const t = at(c, 22);
-      if (t && t.type === 'tower' && !at(c, 26)) t.r = 26;
-    }
-    s.southGate = true;
-  }
-  // The world grew from 8×9 plots to the 24×24 valley, with your land now starting at plot (8,8):
-  // move every building and owned plot of an older save into the middle.
-  if ((s.worldV ?? 1) < 2) {
-    for (const b of s.buildings) { b.c += O; b.r += O; }
-    s.owned = s.owned.map((k) => { const [x, y] = k.split(',').map(Number); return chunkKey(x + LAND0, y + LAND0); });
-    s.worldV = 2;
-  }
   return s;
 }
 
@@ -212,17 +180,17 @@ function loadGame() {
   };
   const current = read(SAVE_KEY);
   if (current) return upgradeSave(current);
-  for (const key of OLD_SAVE_KEYS) {
-    const old = read(key);
-    if (old) {
-      // Very old saves: keep gold and land (moved into today's world), start from the new layout.
-      const owned = old.owned.map((k) => { const [x, y] = k.split(',').map(Number); return chunkKey(x + LAND0, y + LAND0); });
-      return upgradeSave({ ...newGame(), gold: old.gold, bought: old.bought, owned });
-    }
+  const fresh = upgradeSave(newGame());
+  const v1 = read(V1_SAVE_KEY);
+  if (v1) {
+    // Moving to v2: keep the things that outlive a death.
+    if (v1.records) fresh.records = { lives: v1.records.lives || 1, runs: v1.records.runs || [] };
+    fresh.gems = v1.gems || 0;
+    if (Array.isArray(v1.ownedThemes)) fresh.ownedThemes = v1.ownedThemes;
+    if (v1.look) fresh.look = v1.look;
   }
-  return upgradeSave(newGame());
+  return fresh;
 }
-
 // Everything saves, run cards and the current run included (roguelike: the run IS your life).
 function saveGame() {
   if (SANDBOX) return;
@@ -241,7 +209,6 @@ const ownsTile = (c, r) => ownsChunk(...chunkOfTile(c, r));
 const covers = (b, c, r) => c >= b.c && r >= b.r && c < b.c + sizeOf(b) && r < b.r + sizeOf(b);
 const buildingAt = (c, r) => game.buildings.find((b) => covers(b, c, r));
 const inWorld = (c, r) => c >= 0 && r >= 0 && c < N && r < NR;
-const house = () => game.buildings.find((b) => b.type === 'house');
 
 // Can a building of this size (b, or a new one of `type`) sit with its top-left corner at (c, r)?
 // Needs your land and no other building.
@@ -289,30 +256,58 @@ const isRiver = (c, r) => r >= RIVER_TOP && r <= RIVER_BOTTOM && c >= 34 && Math
 const isBridge = (c, r) => isRiver(c, r) && PATH_COLS.includes(c);
 // Any water you can't walk on (ponds, river, mountain lakes). Ocean is separate.
 const isWet = (c, r) => (isWater(c, r) || isRiver(c, r) || isMountainLake(c, r)) && !isBridge(c, r);
+// The village entrance: the first path tile past the bridge, in each of the path's two columns.
+// A zombie that steps onto it has got through: the run is over.
+const gateRows = new Map();
+function villageGateRow(c = PATH_COLS[0]) {
+  if (!gateRows.has(c)) {
+    let r = RIVER_TOP;
+    while (r <= RIVER_BOTTOM && !isRiver(c, r)) r++;
+    while (isRiver(c, r)) r++;
+    gateRows.set(c, r);
+  }
+  return gateRows.get(c);
+}
+const isVillageGate = (c, r) => PATH_COLS.includes(c) && r === villageGateRow(c);
 
-// ---------- The open world (village) ----------
-// The bottom of the valley (sketch "B") is the open world: never buyable, no forest, home of the village and
-// its NPCs (design TBD; for now a plaza, a well and the three shops). A straight dirt path runs from the bottom
-// of your starting land down between plot columns 4 and 5, over the river on a wooden bridge, to the plaza.
-// Only you (and your pet) walk there; zombies never do. Plots of your land that the path crosses can still be
-// bought (the path stays dirt, like the road).
-const TRAIL_TOP = START_CHUNKS.reduce((m, [, y]) => Math.max(m, y), 0) * CHUNK + CHUNK; // 78: below your start plots
+// ---------- The village ----------
+// The bottom of the valley (sketch "B") is the village you're defending: never buyable, no forest. From the
+// bridge, the village street runs down to the plaza.
 const PLAZA = { c0: O + 18, c1: O + 29, r0: RIVER_BOTTOM + 3, r1: RIVER_BOTTOM + 6 };     // 110..113
-const isTrail = (c, r) => PATH_COLS.includes(c) && r >= TRAIL_TOP && r < PLAZA.r0 && !isRiver(c, r);
-const isPlaza = (c, r) => c >= PLAZA.c0 && c <= PLAZA.c1 && r >= PLAZA.r0 && r <= PLAZA.r1;
+const STREET_END = RIVER_BOTTOM + 20;   // 127: the main street runs from the bridge down to the Town Hall here
+const isTrail = (c, r) => PATH_COLS.includes(c) && r >= villageGateRow(c) && r < STREET_END;
+const isPlaza = (c, r) => (c >= PLAZA.c0 && c <= PLAZA.c1 && r >= PLAZA.r0 && r <= PLAZA.r1)
+  || (c >= O + 20 && c <= O + 26 && r >= STREET_END + 3 && r <= STREET_END + 4); // and a little square below the Town Hall
 const inVillage = (c, r) => ground(c, r) === 'open';
-// Shops are 2×2 along the top of the open world; you talk to them from the tile in front of the door.
+// Buildings you can go into (w×h tiles; their pictures can stand taller than their footprint). You talk to
+// the keeper standing beside each door.
 const SHOPS = [
   { id: 'petshop', name: 'Pet Shop', c: O + 12, r: RIVER_BOTTOM + 1 },
   { id: 'store', name: 'General Store', c: O + 31, r: RIVER_BOTTOM + 1 },
   { id: 'tavern', name: 'Tavern', c: O + 36, r: RIVER_BOTTOM + 1 },
+  { id: 'blacksmith', name: 'Blacksmith', c: O + 12, r: PLAZA.r0 + 2 },
+  { id: 'chapel', name: 'Chapel', c: O + 34, r: PLAZA.r0 + 2 },
+  { id: 'townhall', name: 'Town Hall', c: O + 22, r: STREET_END, w: 3, h: 3 },
 ];
-for (const s of SHOPS) s.door = { c: s.c + 1, r: s.r + 2 };
+for (const s of SHOPS) { s.w ??= 2; s.h ??= 2; s.door = { c: s.c + Math.floor(s.w / 2), r: s.r + s.h }; }
 const WELL = { c: O + 20, r: PLAZA.r1 };
-const shopAt = (c, r) => SHOPS.find((s) => c >= s.c && c < s.c + 2 && r >= s.r && r < s.r + 2);
-// Blocked: the shops, the well, and the shopkeepers standing beside each door.
-const villageBlocked = (c, r) => !!shopAt(c, r) || (c === WELL.c && r === WELL.r) || SHOPS.some((s) => c === s.c && r === s.r + 2);
-
+// The families you're protecting: ten cottages along the main street.
+const FAMILIES = ['MILLER', 'BAKER', 'FLETCHER', 'COOPER', 'THATCHER', 'POTTER', 'WEAVER', 'TANNER', 'MASON', 'CARTER'];
+const HOMES = [[20, 115], [26, 115], [16, 115], [30, 115], [20, 119], [26, 119], [16, 119], [30, 119], [20, 123], [26, 123]]
+  .map(([c, r], i) => ({ id: 'cottage', v: i, c: O + c, r, w: 2, h: 2, family: FAMILIES[i] }));
+// Little things that make it a village: market stalls on the plaza, lamps along the street, flower gardens.
+const PROPS = [
+  { id: 'stall', v: 0, c: O + 19, r: PLAZA.r0, w: 2, h: 1 }, { id: 'stall', v: 1, c: O + 27, r: PLAZA.r0, w: 2, h: 1 },
+  ...[117, 121, 125].flatMap((r) => [{ id: 'lamp', c: O + 22, r, w: 1, h: 1 }, { id: 'lamp', c: O + 25, r, w: 1, h: 1 }]),
+  { id: 'lamp', c: O + 18, r: PLAZA.r0 + 2, w: 1, h: 1 }, { id: 'lamp', c: O + 29, r: PLAZA.r0 + 2, w: 1, h: 1 },
+  ...[117, 121].flatMap((r) => [16, 17, 30, 31].map((c) => ({ id: 'flowers', c: O + c, r, w: 1, h: 1 }))),
+];
+const covering = (list, c, r) => list.find((s) => c >= s.c && c < s.c + s.w && r >= s.r && r < s.r + s.h);
+const shopAt = (c, r) => covering(SHOPS, c, r);
+const homeAt = (c, r) => covering(HOMES, c, r);
+// Blocked: buildings, homes, props, the well, and the keepers standing beside each door.
+const villageBlocked = (c, r) => !!shopAt(c, r) || !!homeAt(c, r) || !!covering(PROPS, c, r)
+  || (c === WELL.c && r === WELL.r) || SHOPS.some((s) => c === s.c && r === s.r + s.h);
 // Only plots of your 8×8 land can be bought, and only next to land you already own.
 function canBuy(cx, cy) {
   if (!isLandPlot(cx, cy) || ownsChunk(cx, cy)) return false;
@@ -328,7 +323,7 @@ const forestTree = (c, r) => {
 };
 // A few lone trees in the open world, away from the village.
 const meadowTree = (c, r) => ground(c, r) === 'open' && hash(c, r, 9) < 0.035 && !isTrail(c, r)
-  && !(c >= PLAZA.c0 - 8 && c <= PLAZA.c1 + 10 && r <= PLAZA.r1 + 3);
+  && !(c >= O + 8 && c <= O + 44 && r <= STREET_END + 6);
 
 // ---------- Art ----------
 
@@ -370,7 +365,6 @@ function levelImg(type, level, mask, flash) {
   if (!c) {
     let rows, pal = themePalette(theme);
     if (type === 'wall') rows = wallRows(level, mask);
-    else if (type === 'house') rows = houseRows(level);
     else if (type === 'tower') { rows = towerRows(); pal = towerPalette(level); }
     else if (hasCardArt(type)) { rows = cardRows(type); pal = PAL; }
     else if (BUILDINGS[type].decor) rows = decorRows(type);
@@ -399,9 +393,8 @@ const edgesOf = (c, r, same) => ({ n: !same(c, r - 1), s: !same(c, r + 1), w: !s
 function drawGroundTile(g, c, r, x, y) {
   const v = (c * 7 + r * 13 + c * r) % 4;
   if (isRoad(c, r)) {
-    const edges = edgesOf(c, r, isRoad);
-    if (r === BASE_TOP - 1) edges.s = false; // the road runs into your land
-    if (r === ROAD_TOP) edges.n = false;     // ...and out of the den
+    const edges = edgesOf(c, r, (a, b) => isRoad(a, b) || isBridge(a, b));
+    if (r === ROAD_TOP) edges.n = false;     // the path comes out of the den
     g.drawImage(tileImg('dirt', (c + r) % 4, edges, dirtRows), x, y);
   } else if (isBridge(c, r)) {
     g.drawImage(img.bridge[c === PATH_COLS[0] ? 'w' : 'e'], x, y);
@@ -410,7 +403,6 @@ function drawGroundTile(g, c, r, x, y) {
   } else if (isTrail(c, r) || isPlaza(c, r)) {
     const dirt = (a, b) => isTrail(a, b) || isPlaza(a, b) || isBridge(a, b);
     const edges = edgesOf(c, r, dirt);
-    if (r === TRAIL_TOP) edges.n = false;
     g.drawImage(tileImg('dirt', (c + r) % 4, edges, dirtRows), x, y);
   } else {
     const gr = ground(c, r);
@@ -570,7 +562,7 @@ const heroCanStand = (c, r) => villagerCanStand(c, r)
     || (inVillage(c, r) && !villageBlocked(c, r) && !meadowTree(c, r))));
 
 const hero = {
-  isHero: true, x: (O + 24) * T, y: (O + 28) * T, path: null, wait: 0, t: 0, inside: false, fleeing: false,
+  isHero: true, x: GUARD_POINT.c * T, y: GUARD_POINT.r * T, path: null, wait: 0, t: 0, inside: false, fleeing: false,
   dir: 'down', moving: false,
 };
 const heroArt = new Map();
@@ -583,24 +575,23 @@ function heroImg(dir, frame) {
 let follow = false; // camera follows the hero while walking
 
 // You're the director: there's no character to walk around. You tap things to use them.
-// Reach still matters for repairs and wall upgrades: your people work from the House door, so a wall
+// Reach still matters for repairs and wall upgrades: your people work from the guard point, so a wall
 // buried in the middle of a thick wall can't be got at (smart base design matters).
 const REACH = 1;
 // Is a footprint (c, r, size) within reach of someone standing on (hc, hr)?
 const reachesFrom = (hc, hr, c, r, s) => hc >= c - REACH && hc <= c + s - 1 + REACH && hr >= r - REACH && hr <= r + s - 1 + REACH;
 
-// Which buildings can your people get within reach of, walking from the House door?
+// Which buildings can your people get within reach of, walking from the guard point?
 function reachableSet() {
-  const h = house();
-  const start = { c: h.c + 1, r: h.r + sizeOf(h) };
-  const seen = new Set([`,`]);
-  const queue = [start];
+  const key = (c, r) => `${c},${r}`;
+  const seen = new Set([key(GUARD_POINT.c, GUARD_POINT.r)]);
+  const queue = [GUARD_POINT];
   while (queue.length) {
     const cur = queue.shift();
     for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const c = cur.c + dc, r = cur.r + dr, key = `,`;
-      if (seen.has(key) || !heroCanStand(c, r)) continue;
-      seen.add(key);
+      const c = cur.c + dc, r = cur.r + dr, k = key(c, r);
+      if (seen.has(k) || !heroCanStand(c, r)) continue;
+      seen.add(k);
       queue.push({ c, r });
     }
   }
@@ -608,12 +599,11 @@ function reachableSet() {
   for (const b of game.buildings) {
     const s = sizeOf(b);
     search: for (let r = b.r - REACH; r <= b.r + s - 1 + REACH; r++) {
-      for (let c = b.c - REACH; c <= b.c + s - 1 + REACH; c++) if (seen.has(`,`)) { out.add(b); break search; }
+      for (let c = b.c - REACH; c <= b.c + s - 1 + REACH; c++) if (seen.has(key(c, r))) { out.add(b); break search; }
     }
   }
   return out;
 }
-
 // ---------- Pets ----------
 // One pet walks with you. Its perk works while it's been fed in the last PET_FED_HOURS.
 const pet = { x: hero.x, y: hero.y, t: 0 };
@@ -642,28 +632,32 @@ function updatePet(dt) {
 
 // ---------- Village folk ----------
 const inVillageFree = (c, r) => inVillage(c, r) && !villageBlocked(c, r);
-const SHOPKEEPERS = SHOPS.map((s, i) => ({
-  shop: s, c: s.c, r: s.r + 2,
-  look: [{ skin: '#f4c8a0', hair: '#f4f4f4', shirt: '#ef7d57', pants: '#5a3a1f' },
-    { skin: '#c8955a', hair: '#1a1c2c', shirt: '#b13e53', pants: '#333c57' },
-    { skin: '#f4c8a0', hair: '#8b5a2b', shirt: '#7a2f8f', pants: '#29366f' }][i],
-}));
+const KEEPER_LOOKS = {
+  petshop: { skin: '#f4c8a0', hair: '#f4f4f4', shirt: '#ef7d57', pants: '#5a3a1f' },
+  store: { skin: '#c8955a', hair: '#1a1c2c', shirt: '#b13e53', pants: '#333c57' },
+  tavern: { skin: '#f4c8a0', hair: '#8b5a2b', shirt: '#7a2f8f', pants: '#29366f' },
+  blacksmith: { skin: '#8d6a3a', hair: '#1a1c2c', shirt: '#333c57', pants: '#5a3a1f' },  // the smith
+  chapel: { skin: '#f4c8a0', hair: '#94b0c2', shirt: '#f4f4f4', pants: '#f4f4f4' },      // the priest
+  townhall: { skin: '#e8b088', hair: '#c8c8d0', shirt: '#29366f', pants: '#1a1c2c' },    // the mayor
+};
+const SHOPKEEPERS = SHOPS.map((s) => ({ shop: s, c: s.c, r: s.r + s.h, look: KEEPER_LOOKS[s.id] }));
 const shopkeeperAt = (c, r) => SHOPKEEPERS.find((k) => k.c === c && k.r === r);
-const TOWNSFOLK_LOOKS = [
-  { skin: '#f4c8a0', hair: '#d9a033', shirt: '#41a6f6', pants: '#566c86' },
-  { skin: '#8d6a3a', hair: '#1a1c2c', shirt: '#ffcd75', pants: '#257179' },
-  { skin: '#f4c8a0', hair: '#b13e53', shirt: '#a7f070', pants: '#5d275d' },
-];
+// Townsfolk: everyday villagers going about their day (they hurry indoors when a wave starts).
+const TOWNSFOLK_LOOKS = Array.from({ length: 10 }, (_, i) => {
+  const pickPart = (k, salt) => LOOK_PARTS[k].options[(i * salt + k) % LOOK_PARTS[k].options.length];
+  return { skin: pickPart(0, 3), hair: pickPart(1, 5), shirt: pickPart(2, 7), pants: pickPart(3, 2) };
+});
 const townsfolk = TOWNSFOLK_LOOKS.map((look, i) => ({
-  look, x: (PLAZA.c0 + 2 + i * 4) * T, y: (PLAZA.r0 + 2) * T, path: null, wait: 1 + i, t: 0, dir: 'down',
+  look, x: (PLAZA.c0 + 1 + (i % 5) * 2) * T, y: (PLAZA.r0 + 1 + Math.floor(i / 5) * 6) * T, path: null, wait: 1 + i * 0.4,
+  t: Math.random() * 5, dir: 'down',
   canStand: (c, r) => inVillageFree(c, r) && !shopkeeperAt(c, r),
 }));
 const villageArt = new Map();
-function villageImg(id) {
-  if (!villageArt.has(id)) villageArt.set(id, rowsToCanvas(id === 'well' ? wellRows() : shopRows(id)));
-  return villageArt.get(id);
+function villageImg(id, v = 0) {
+  const key = `${id}:${v}`;
+  if (!villageArt.has(key)) villageArt.set(key, rowsToCanvas(id === 'well' ? wellRows() : villageRows(id, v)));
+  return villageArt.get(key);
 }
-
 function personImg(look, dir, frame) {
   const key = `p:${dir}:${frame}:${JSON.stringify(look)}`;
   if (!heroArt.has(key)) heroArt.set(key, rowsToCanvas(heroRows(dir, frame), heroPalette(look)));
@@ -695,25 +689,6 @@ function pickTarget(v) {
   const path = findPath(v, null, 10, true, v.canStand || villagerCanStand);
   if (!path) { v.wait = 2; return; }
   v.path = path;
-}
-
-// Wave starting: everyone runs for the House door.
-function villagersRunHome() {
-  const h = house();
-  const nextToHouse = (c, r) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dc, dr]) => {
-    const b = buildingAt(c + dc, r + dr);
-    return b === h;
-  });
-  for (const v of villagers) { // the hero stays out to fight
-    if (v.inside) continue;
-    // Archers stay at their towers and builders keep fixing things; everyone else runs.
-    // Fighters stay out to fight.
-    if (v.npc && ((v.npc.role === 'archer' && v.npc.post) || v.npc.role === 'builder' || isFighter(v))) continue;
-    v.job = null;
-    v.path = findPath(v, nextToHouse, 160, false, v.isHero ? heroCanStand : v.canStand || villagerCanStand) || [];
-    v.fleeing = true;
-    v.wait = 0;
-  }
 }
 
 function updateVillager(v, dt) {
@@ -751,22 +726,6 @@ function updateVillager(v, dt) {
   v.y += (dy / d) * step;
 }
 
-// Villagers step out of the House door when it's safe again.
-function villagersLeaveHouse() {
-  const h = house();
-  const doorC = h.c + 1, doorR = h.r + sizeOf(h);
-  villagers.forEach((v, i) => {
-    if (!v.inside && !v.fleeing) return; // only those who went in come out
-    const c = villagerCanStand(doorC + (i % 2 ? 1 : -1), doorR) ? doorC + (i % 2 ? 1 : -1) : doorC;
-    v.x = c * T;
-    v.y = doorR * T;
-    v.path = null;
-    v.inside = false;
-    v.fleeing = false;
-    v.wait = 0.3 + i * 0.5;
-  });
-}
-
 // ---------- NPCs: your people ----------
 // You're the director: hire people at the Tavern and they get on with their jobs by themselves.
 //   Archer: walks to a tower that has nobody in it and mans it. A tower with nobody in it doesn't shoot.
@@ -782,8 +741,7 @@ function npcLook(n) {
 }
 
 function makeBody(n, at) {
-  const h = house();
-  const pos = at || { c: h.c + 1, r: h.r + sizeOf(h) };
+  const pos = at || GUARD_POINT;
   return {
     npc: n, npcId: n.id, look: npcLook(n), x: pos.c * T, y: pos.r * T, path: null, wait: 0.3 + Math.random(),
     t: Math.random() * 5, inside: false, fleeing: false, dir: 'down', moving: false, atPost: false, job: null,
@@ -805,6 +763,8 @@ const vTile = (v) => ({ c: Math.round(v.x / T), r: Math.round(v.y / T) });
 const npcInReach = (v, b, size = sizeOf(b)) => { const t = vTile(v); return reachesFrom(t.c, t.r, b.c, b.r, size); };
 // Path to a spot within reach of building b (never standing on it).
 const pathToReach = (v, b, maxSteps = 200) => findPath(v, (c, r) => !covers(b, c, r) && reachesFrom(c, r, b.c, b.r, sizeOf(b)), maxSteps, false, v.canStand);
+// Path back to the guard point (fighters going home).
+const pathToGuard = (v) => findPath(v, (c, r) => Math.abs(c - GUARD_POINT.c) <= 2 && Math.abs(r - GUARD_POINT.r) <= 2, 400, false, v.canStand);
 const isManned = (b) => villagers.some((v) => v.npc.post === b.id && v.atPost);
 const faceTowards = (v, b) => {
   const t = vTile(v);
@@ -813,11 +773,11 @@ const faceTowards = (v, b) => {
 
 // ---------- Fighters ----------
 // Guards (swords) and gunners (guns) stay outside when a wave starts and go to meet any zombie that
-// gets within GUARD_RADIUS of the House. Zombies stop to fight them. A fighter who drops lies there
+// gets within GUARD_RADIUS of the guard point. Zombies stop to fight them. A fighter who drops lies there
 // until the wave is over, then gets back up with full health.
 const isFighter = (v) => !!NPC_ROLES[v.npc?.role]?.fight;
 const fightOf = (v) => NPC_ROLES[v.npc.role].fight;
-const fighterMaxHp = (v) => Math.round(fightOf(v).hp * fighterScale(houseLevel(game)) * (traitOf(v.npc).hp || 1));
+const fighterMaxHp = (v) => Math.round(fightOf(v).hp * fighterScale(waveLevel(Math.max(1, run.wave))) * (traitOf(v.npc).hp || 1));
 function healFighter(v) { v.down = false; v.hp = fighterMaxHp(v); v.foe = null; v.cd = 0; }
 
 function fighterThink(v, dt) {
@@ -826,12 +786,12 @@ function fighterThink(v, dt) {
   v.swing = Math.max(0, (v.swing || 0) - dt);
   if (v.down) v.t += dt; // keeps the "down" marker blinking
   if (v.down || v.inside) { if (!battle.active) healFighter(v); return; }
-  // Fighters live at the base: if they're far from the House (just hired, say), they walk back.
-  const home = centerOf(house());
+  // Fighters live at the guard point: if they're far from it (just hired, say), they walk back.
+  const home = { x: (GUARD_POINT.c + 0.5) * T, y: (GUARD_POINT.r + 0.5) * T };
   const far = Math.hypot(v.x + T / 2 - home.x, v.y + T / 2 - home.y) > (GUARD_RADIUS - 3) * T;
   if (!battle.active) {
     if (v.hp < fighterMaxHp(v)) healFighter(v);
-    if (far && !v.path?.length) { v.path = pathToReach(v, house(), 400) || []; v.wait = 0; v.goingHome = true; }
+    if (far && !v.path?.length) { v.path = pathToGuard(v) || []; v.wait = 0; v.goingHome = true; }
     if (!far) v.goingHome = false;
     return;
   }
@@ -847,7 +807,7 @@ function fighterThink(v, dt) {
   }
   v.foe = foe;
   if (!foe) {
-    if (far && !v.path?.length) { v.path = pathToReach(v, house(), 400) || []; v.wait = 0; }
+    if (far && !v.path?.length) { v.path = pathToGuard(v) || []; v.wait = 0; }
     return;
   }
   if (best <= f.range * T) {
@@ -857,7 +817,7 @@ function fighterThink(v, dt) {
     if (v.cd > 0) return;
     v.cd = f.rate;
     v.swing = 0.2;
-    const damage = f.damage * fighterScale(houseLevel(game)) * (tr.power || 1);
+    const damage = f.damage * fighterScale(waveLevel(Math.max(1, run.wave))) * (tr.power || 1);
     if (f.weapon === 'gun') {
       const len = Math.hypot(dx, dy) || 1;
       battle.shots.push({ x: me.x, y: me.y - 4, vx: dx / len, vy: dy / len, target: foe, def: { damage }, kind: 'bullet', travelled: 0, hits: new Set() });
@@ -890,7 +850,7 @@ function fighterThink(v, dt) {
 // Tap the hero for their menu: MOVE (then tap where they should stand guard - works mid-wave too),
 // UPGRADE (daytime) and LOOK. They shoot any zombie in range, on the way there too.
 let movingHero = false; // waiting for you to tap the hero's new guard spot
-const heroPost = () => game.hero.post || { c: house().c + 1, r: house().r + sizeOf(house()) + 1 };
+const heroPost = () => game.hero.post || GUARD_POINT;
 const heroMaxHp = () => heroStats(game.hero.level).hp;
 const heroTile = () => ({ c: Math.round(hero.x / T), r: Math.round(hero.y / T) });
 
@@ -1011,9 +971,9 @@ function npcThink(v, dt) {
 const traitOf = (n) => TRAITS[n.trait] || {};
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 
-// A fresh board of random applicants. Roles your House hasn't unlocked never turn up.
+// A fresh board of random applicants.
 function rollApplicants() {
-  const roles = Object.keys(NPC_ROLES).filter((r) => (NPC_ROLES[r].house || 1) <= houseLevel(game));
+  const roles = Object.keys(NPC_ROLES);
   const used = new Set(game.npcs.map((n) => n.name));
   game.applicants = Array.from({ length: APPLICANTS }, () => {
     const role = pick(roles);
@@ -1039,8 +999,6 @@ function rerollApplicants() {
 function hireApplicant(i) {
   const a = game.applicants?.[i];
   if (!a) return false;
-  const cap = npcCap(houseLevel(game));
-  if (game.npcs.length >= cap) { showToast(`NO ROOM - UPGRADE YOUR HOUSE (${cap} PEOPLE MAX)`); return false; }
   if (!canAfford(game, a.price)) { showToast(`NOT ENOUGH ${missing(game, a.price).toUpperCase()}`); return false; }
   for (const k of RES) game[k] -= a.price[k] || 0;
   game.applicants[i] = null;
@@ -1058,9 +1016,6 @@ function addNpc(role, name = pick(NPC_NAMES.filter((x) => !game.npcs.some((n) =>
 
 // Hire a plain (no trait) person of a role at list price. Only the test hook and bots use this.
 function hireNpc(role) {
-  if ((NPC_ROLES[role].house || 1) > houseLevel(game)) { showToast(`UPGRADE YOUR HOUSE TO LEVEL ${NPC_ROLES[role].house} FIRST`); return false; }
-  const cap = npcCap(houseLevel(game));
-  if (game.npcs.length >= cap) { showToast(`NO ROOM - UPGRADE YOUR HOUSE (${cap} PEOPLE MAX)`); return false; }
   const price = NPC_ROLES[role].price;
   if (!canAfford(game, price)) { showToast(`NOT ENOUGH ${missing(game, price).toUpperCase()}`); return false; }
   for (const k of RES) game[k] -= price[k] || 0;
@@ -1103,10 +1058,11 @@ function clampCam() {
   cam.y = Math.max(0, Math.min(WORLD_H, cam.y));
 }
 
+// The starting view: your starting land above the bridge (with the bridge and village edge in sight).
 function homeView() {
-  cam.x = WORLD / 2;
-  cam.y = WORLD / 2;
-  const area = (CHUNK * 2 + 2) * T;
+  cam.x = (GUARD_POINT.c + 1) * T;
+  cam.y = (RIVER_TOP + 1) * T;
+  const area = (CHUNK * 2 + 8) * T;
   cam.z = Math.min(viewW / area, (viewH - (HUD_H + BAR_H) * ui / dpr) / area);
   clampCam();
 }
@@ -1132,8 +1088,15 @@ function layoutUI() {
   buttons.home = { x: 52, y: by, w: 44, h: 24, label: 'ME' };
   buttons.main = { x: 100, y: by, w: UW - 104, h: 24 }; // DEFEND! / NEXT WAVE
   buttons.repair = { x: 4, y: UH - BAR_H - 24, w: 76, h: 20 };
-  buttons.zoomIn = { x: UW - 24, y: HUD_H + 6, w: 20, h: 20, label: '+' };
-  buttons.zoomOut = { x: UW - 24, y: HUD_H + 30, w: 20, h: 20, label: '-' };
+  buttons.settings = { x: UW - 24, y: HUD_H + 6, w: 20, h: 20 };
+  buttons.zoomIn = { x: UW - 24, y: HUD_H + 30, w: 20, h: 20, label: '+' };
+  buttons.zoomOut = { x: UW - 24, y: HUD_H + 54, w: 20, h: 20, label: '-' };
+  // Settings popup: CONTINUE, RESTART, TOP RUNS.
+  const sw = 130, sh = 94, sx = Math.round((UW - sw) / 2), sy = Math.round((UH - sh) / 2);
+  buttons.settingsBox = { x: sx, y: sy, w: sw, h: sh };
+  buttons.setContinue = { x: sx + 10, y: sy + 18, w: sw - 20, h: 20, label: 'CONTINUE', primary: true };
+  buttons.setRestart = { x: sx + 10, y: sy + 42, w: sw - 20, h: 20 };
+  buttons.setRuns = { x: sx + 10, y: sy + 66, w: sw - 20, h: 20, label: 'TOP RUNS' };
 
   // Info panel for the selected building.
   const py0 = UH - BAR_H - PANEL_H - 2;
@@ -1154,7 +1117,6 @@ function layoutUI() {
   buttons.tabStore = { x: mx + 98, y: my + 4, w: 44, h: 14, label: 'STORE' };
   buttons.storeRows = THEMES.map((t, i) => ({ x: mx + mw - 46, y: rowY(i), w: 40, h: 15 }));
   buttons.menuRows = MENU.map((type, i) => ({ type, x: mx + mw - 46, y: rowY(i), w: 40, h: 15, label: 'BUY' }));
-  buttons.menuReset = { x: mx + mw - 46, y: rowY(MENU.length), w: 40, h: 15, label: 'RESET' };
   buttons.themePrev = { x: mx + mw - 46, y: rowY(0), w: 19, h: 15, label: '<' };
   buttons.themeNext = { x: mx + mw - 25, y: rowY(0), w: 19, h: 15, label: '>' };
   buttons.decorRows = DECOR.map((type, i) => ({ type, x: mx + mw - 46, y: rowY(i + 1), w: 40, h: 15, label: 'BUY' }));
@@ -1224,7 +1186,6 @@ let speed = 1;
 
 const battle = new Battle({
   buildings: () => game.buildings,
-  house,
   maxHp,
   run: () => run,
   manned: (b) => isManned(b),
@@ -1235,7 +1196,10 @@ const battle = new Battle({
     v.flash = 0.12;
     if (v.hp <= 0) { v.down = true; v.path = null; v.foe = null; addPuff(v.x + T / 2, v.y + T / 2); showToast(`YOUR ${v.isHero ? 'HERO' : NPC_ROLES[v.npc.role].name.toUpperCase()} IS DOWN!`); }
   },
-  walkable: (c, r) => inWorld(c, r) && !isWet(c, r) && (isRoad(c, r) || ownsTile(c, r)),
+  // Zombies walk the path, the bridge and your land (never water), heading for the village entrance.
+  walkable: (c, r) => inWorld(c, r) && !isWet(c, r) && (isRoad(c, r) || isBridge(c, r) || isVillageGate(c, r) || ownsTile(c, r)),
+  goals: () => PATH_COLS.map((c) => ({ c, r: villageGateRow(c) })),
+  onBreakthrough: (m) => { addPuff(m.x, m.y); showToast('A ZOMBIE GOT INTO THE VILLAGE!'); },
   cave: () => ({ c: CAVE.c, r: CAVE.r }),
   onKill: (m) => {
     // Zombies are your only income. The cat's perk: +20% gold.
@@ -1245,7 +1209,6 @@ const battle = new Battle({
     run.kills++;
     addPuff(m.x, m.y);
     if (gold) addFloat(`+${gold}`, m.x, m.y - 14);
-    warnIfFull(gold < due);
   },
   onDestroyed: (b) => { const p = centerOf(b); addPuff(p.x, p.y); },
 });
@@ -1310,7 +1273,7 @@ function rerollCards() {
 // ---------- Items (your inventory) ----------
 // Picked cards and buildings you've put away wait here until you place them. Pull the ITEMS bar up from
 // above the bottom bar, slide through it, tap an item, then tap your land. Select a building and tap STORE
-// to put it away (between waves, at full health). Stored things still count toward your House limits.
+// to put it away (between waves, at full health). Stored things still count as yours.
 let itemsOpen = false;
 let itemsScroll = 0;      // how far the bar is slid (UI pixels)
 let placingItem = null;   // the item being placed, or null
@@ -1338,7 +1301,7 @@ function placeItem(it, c, r) {
 
 function storeBuilding(b) {
   if (phase !== 'home') { showToast('PUT THINGS AWAY BETWEEN WAVES'); return false; }
-  if (b.type === 'house' || b.type === 'tree') { showToast("THAT CAN'T BE PUT AWAY"); return false; }
+  if (b.type === 'tree') { showToast("THAT CAN'T BE PUT AWAY"); return false; }
   if (underConstruction(game, b)) { showToast('WAIT FOR THE UPGRADE TO FINISH'); return false; }
   if (b.hp < maxHp(b)) { showToast('FIX IT FIRST'); return false; }
   game.buildings.splice(game.buildings.indexOf(b), 1);
@@ -1355,15 +1318,14 @@ function storeBuilding(b) {
   return true;
 }
 // Bots and tests: put the first run card in your items somewhere sensible. (Players place their own.)
-// Traps go on the monsters' route; everything else near the gate and the House.
+// Traps go on the monsters' route; everything else near the guard point.
 function autoPlace() {
   const it = game.items.find((i) => BUILDINGS[i.type].run);
   if (!it) return false;
   const type = it.type;
   const size = BUILDINGS[type].size || 1;
   battle.recomputeFlow();
-  const h = house();
-  const hc = { c: h.c + 1, r: h.r + 1 };
+  const hc = GUARD_POINT;
   const path = monsterPath();
   const pathList = [...path].map((k) => { const [c, r] = k.split(',').map(Number); return { c, r }; });
   const candidates = [];
@@ -1374,12 +1336,12 @@ function autoPlace() {
       if (!Number.isFinite(d)) continue;
       const near = Math.hypot(c - hc.c, r - hc.r);
       let score;
-      if (BUILDINGS[type].trap) score = d < 3 ? Infinity : d + Math.random() * 2; // on the path, not hugging the House
+      if (BUILDINGS[type].trap) score = d < 3 ? Infinity : d + Math.random() * 2; // on the path, not right at the guard point
       else if (type === 'barricade') score = Math.abs(near - 5) + Math.random();
       else if (type === 'scarecrow') score = Math.abs(near - 4) + Math.random(); // close enough for the towers to cover it
       else if (CARDS[type]?.kind === 'tower') {
         // Towers go where they cover the most of the zombies' route (the playtest found AUTO put cannons
-        // and braziers out of range when it only looked at distance to the House).
+        // and braziers out of range when it only looked at distance to the base).
         const range = CARDS[type].range, cx = c + size / 2 - 0.5, cy = r + size / 2 - 0.5;
         const covered = pathList.filter((p) => Math.hypot(p.c - cx, p.r - cy) <= range).length;
         score = covered ? -covered + near * 0.15 + Math.random() * 0.5 : Infinity;
@@ -1407,7 +1369,7 @@ function autoPlace() {
 // The tiles monsters will walk over, following the flow field from the road's end.
 function monsterPath() {
   const seen = new Set();
-  let cur = { c: roadLeft(BASE_TOP - 1), r: BASE_TOP - 1 };
+  let cur = { c: CAVE.c, r: CAVE.r };
   // Same rule the monsters use: cheapest next step, counting the effort of smashing what's there.
   for (let i = 0; i < 300; i++) {
     seen.add(`${cur.c},${cur.r}`);
@@ -1424,20 +1386,11 @@ function monsterPath() {
   return seen;
 }
 
-// ---------- Runs & waves ----------
-
-// Gold beyond what the House can store is lost; say so once per run (the playtest found it was silent).
-function warnIfFull(lost) {
-  if (!lost || run.capWarned) return;
-  run.capWarned = true;
-  showToast('GOLD STORAGE FULL - UPGRADE YOUR HOUSE TO KEEP MORE');
-}
-
-// ---------- The roguelike loop ----------
+// ---------- Runs & waves (the roguelike loop) ----------
 // One life, endless waves: get as far as you can. Between waves there's no clock: take as long as you like to
-// build and rearrange your base, then tap START WAVE. Each cleared wave brings a card and new faces at the
-// Tavern; every BOSS_EVERY-th wave brings Kings. When the House falls, the save is wiped and the run goes
-// into your TOP RUNS (on the home screen).
+// build and rearrange your defenses, then tap START WAVE. Each cleared wave brings a card and new faces at the
+// Tavern; every BOSS_EVERY-th wave brings Kings. If one zombie gets into the village, the save is wiped and the
+// run goes into your TOP RUNS (on the home screen).
 
 // The run's state, as saved (run cards on the map save with the buildings).
 function runSnapshot() {
@@ -1469,8 +1422,6 @@ function startRun() {
   run.rerolls = 1 + (petPerk('owl') ? 1 : 0);
   run.omen = OMENS[Math.floor(Math.random() * OMENS.length)];
   battle.reset();
-  const h = house();
-  h.hp = Math.round(maxHp(h) * (run.omen.houseStart || 1));
   phase = 'home';
   offerCards();
 }
@@ -1489,33 +1440,28 @@ function nextWave() {
   placing = null;
   placingItem = null;
   itemsOpen = false;
-  villagersRunHome();
   battle.startWave(run.wave);
   const kings = run.wave / BOSS_EVERY;
   showToast(isKingWave(run.wave) ? (kings > 1 ? `WAVE ${run.wave} - ${kings} KINGS ARE COMING!` : `WAVE ${run.wave} - THE KING IS COMING!`) : `WAVE ${run.wave} - HERE THEY COME!`);
 }
 
-// Wave cleared: the House patches itself up a bit, and a card and new faces arrive.
+// Wave cleared: a card and new faces at the Tavern arrive.
 function waveCleared() {
   battle.active = false;
   const due = waveBonus(run.wave);
   const bonus = earn(game, 'gold', due);
-  warnIfFull(bonus < due);
   run.earned += bonus;
   game.stats.bestWave = Math.max(game.stats.bestWave, run.wave);
-  const h = house();
-  h.hp = Math.min(maxHp(h), h.hp + Math.round(maxHp(h) * WAVE_HEAL));
   for (const b of game.buildings) if (b.type === 'tree' || BUILDINGS[b.type].decor) b.hp = maxHp(b);
   phase = 'home';
   speed = 1;
-  villagersLeaveHouse();
   offerCards();
   rollApplicants(); // new faces at the Tavern after every wave
   showToast(`WAVE ${run.wave} CLEARED! +${bonus} GOLD`);
   saveGame();
 }
 
-// The House fell: the run is over. It goes into your top runs, and the save is wiped right now (so reloading
+// A zombie got into the village: the run is over. It goes into your top runs, and the save is wiped right now (so reloading
 // can't undo it). What survives: art, gems, your look and your records.
 function endRun() {
   battle.active = false;
@@ -1525,21 +1471,26 @@ function endRun() {
   itemsOpen = false;
   phase = 'end';
   run.dead = true;
-  const waves = Math.max(0, run.wave - 1);
-  run.gems = gemsForRun(waves);
-  game.gems += run.gems;
-  const entry = {
-    waves, kills: run.kills, gold: run.earned, house: houseLevel(game), hero: game.hero.level,
-    people: game.npcs.length, omen: run.omen.name, life: game.records.lives, at: Date.now(),
-  };
-  const runs = [...game.records.runs, entry].sort((a, b) => b.waves - a.waves || b.kills - a.kills);
-  run.rank = runs.indexOf(entry) < TOP_RUNS ? runs.indexOf(entry) + 1 : 0;
-  game.records.runs = runs.slice(0, TOP_RUNS);
+  recordRun();
   if (!SANDBOX) {
     const next = upgradeSave(newGame());
     Object.assign(next, carryOver());
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
   }
+}
+
+// Put the run that just ended into your top runs (and pay its gems).
+function recordRun() {
+  const waves = Math.max(0, phase === 'home' ? run.wave : run.wave - 1); // waves fully survived
+  run.gems = gemsForRun(waves);
+  game.gems += run.gems;
+  const entry = {
+    waves, kills: run.kills, gold: run.earned, hero: game.hero.level,
+    people: game.npcs.length, omen: run.omen.name, life: game.records.lives, at: Date.now(),
+  };
+  const runs = [...game.records.runs, entry].sort((a, b) => b.waves - a.waves || b.kills - a.kills);
+  run.rank = runs.indexOf(entry) < TOP_RUNS ? runs.indexOf(entry) + 1 : 0;
+  game.records.runs = runs.slice(0, TOP_RUNS);
 }
 
 // What outlives you: cosmetics and records, nothing that makes the next life easier.
@@ -1567,7 +1518,6 @@ function newLife() {
   shopOpen = null;
   battle.reset();
   startRun();
-  villagersLeaveHouse();
   buildTerrain();
   homeView();
 }
@@ -1575,9 +1525,9 @@ function newLife() {
 const repairCostOf = (b) => Math.ceil((1 - b.hp / maxHp(b)) * BUILDINGS[b.type].repair * 1.5 ** ((b.level || 1) - 1));
 const repairCost = () => game.buildings.reduce((sum, b) => sum + repairCostOf(b), 0);
 
-// Repair as much as you can afford, House-side first, of what your character can reach.
+// Repair as much as you can afford, nearest the guard point first, of what your people can reach.
 function repairAll() {
-  const h = house();
+  const h = GUARD_POINT;
   const reach = reachableSet();
   const damaged = game.buildings.filter((b) => repairCostOf(b) > 0);
   const order = damaged.filter((b) => reach.has(b))
@@ -1588,8 +1538,7 @@ function repairAll() {
     const cost = repairCostOf(b);
     if (cost > game.gold) continue;
     game.gold -= cost;
-    // A resource building rebuilt from rubble starts fresh: no pay for the time it lay broken.
-      b.hp = maxHp(b);
+    b.hp = maxHp(b);
     fixed++;
     const p = centerOf(b);
     addPuff(p.x, p.y);
@@ -1623,7 +1572,6 @@ let menuTab = 'build'; // 'build' | 'looks' | 'store'
 let buildMode = false;
 let offer = null;    // plot the buy popup is asking about: [cx, cy]
 let toast = null;     // { text, time }
-let resetArmed = 0;   // RESET needs two taps
 
 function showToast(text) { toast = { text, time: 2.2 }; }
 
@@ -1638,9 +1586,9 @@ function tryUpgrade(b) {
   return true;
 }
 
-// Upgrade every wall at this level that you can afford and reach, nearest the House first.
+// Upgrade every wall at this level that you can afford and reach, nearest the guard point first.
 function upgradeAllWalls(level) {
-  const h = house();
+  const h = GUARD_POINT;
   const reach = reachableSet();
   const walls = game.buildings
     .filter((b) => b.type === 'wall' && b.level === level && b.hp > 0 && reach.has(b))
@@ -1740,7 +1688,36 @@ function payFor(price) {
 }
 
 function shopItems() {
-  if (shopOpen === 'hero') {
+  // Blacksmith: building kits, straight into your items.
+  if (shopOpen === 'blacksmith') {
+    return BLACKSMITH_GOODS.map((g) => ({
+      title: g.name, sub: `${formatCost(g.price)} - ${g.about}`, label: 'BUY',
+      style: canAfford(game, g.price) ? 'primary' : 'off',
+      act: () => {
+        if (!payFor(g.price)) { showToast('NOT ENOUGH GOLD'); return; }
+        addItem(g.type, 1, g.n);
+        showToast(`${g.name} - IN YOUR ITEMS`);
+      },
+    }));
+  }
+  // Chapel: a blessing for the run.
+  if (shopOpen === 'chapel') {
+    return [
+      { title: 'PRAY FOR LUCK', sub: `${formatCost(CHAPEL_PRAYER)} - +1 CARD REROLL THIS RUN`, label: 'PRAY',
+        style: canAfford(game, CHAPEL_PRAYER) ? 'primary' : 'off',
+        act: () => { if (!payFor(CHAPEL_PRAYER)) { showToast('NOT ENOUGH GOLD'); return; } run.rerolls++; showToast(`REROLLS: ${run.rerolls}`); } },
+      { title: 'THE BELL', sub: 'IT RINGS WHENEVER THE ZOMBIES COME', label: 'INFO', style: 'off', act: () => {} },
+    ];
+  }
+  // Town Hall: the mayor's to-do list (your goals).
+  if (shopOpen === 'townhall') {
+    const from = Math.max(0, Math.min(game.goal - 1, GOALS.length - 5));
+    return GOALS.slice(from, from + 5).map((g, k) => {
+      const i = from + k, done = i < game.goal;
+      const reward = Object.entries(g.reward).map(([r, v]) => `${v}${r === 'gems' ? ' GEMS' : RES_LETTER[r]}`).join(' ');
+      return { title: g.text, sub: done ? 'DONE - THANK YOU!' : `REWARD ${reward}`, label: done ? 'DONE' : i === game.goal ? 'NOW' : '-', style: done ? 'good' : 'off', act: () => {} };
+    }).concat([{ title: `THE VILLAGE IS COUNTING ON YOU`, sub: `BEST RUN: ${game.records.runs[0]?.waves ?? 0} WAVES`, label: 'INFO', style: 'off', act: () => {} }]);
+  }  if (shopOpen === 'hero') {
     const lvl = game.hero.level, st = heroStats(lvl), max = lvl >= HERO_MAX_LEVEL;
     const cost = heroUpgradeCost(lvl);
     return [
@@ -1802,9 +1779,7 @@ function shopItems() {
       },
     }));
   }
-  // Tavern: hire your people.
-  const cap = npcCap(houseLevel(game));
-  const full = game.npcs.length >= cap;
+  const full = false; // v2: no cap on people
   // Tavern: whoever happens to be looking for work today (roguelike: you adapt to who turns up).
   if (!game.applicants) rollApplicants();
   const rows = game.applicants.map((a, i) => {
@@ -1824,8 +1799,8 @@ function shopItems() {
   });
   const unmanned = game.buildings.filter((b) => b.type === 'tower' && b.hp > 0 && !game.npcs.some((n) => n.post === b.id)).length;
   rows.push({
-    title: `PEOPLE ${game.npcs.length}/${cap}`,
-    sub: unmanned ? `${unmanned} TOWER${unmanned > 1 ? 'S' : ''} WITH NO ARCHER!` : full ? 'UPGRADE YOUR HOUSE FOR MORE ROOM' : 'EVERY TOWER IS MANNED',
+    title: `YOUR PEOPLE: ${game.npcs.length}`,
+    sub: unmanned ? `${unmanned} TOWER${unmanned > 1 ? 'S' : ''} WITH NO ARCHER!` : 'EVERY TOWER IS MANNED',
     label: 'INFO', style: 'off', act: () => {},
   });
   return rows;
@@ -1871,6 +1846,8 @@ function onWorldTap(sx, sy) {
   if (inVillage(c, r) || isTrail(c, r) || isBridge(c, r) || isPlaza(c, r)) {
     const shop = shopAt(c, r) || shopkeeperAt(c, r)?.shop;
     if (shop) { openShop(shop.id); return; }
+    const home = homeAt(c, r);
+    if (home) { showToast(`THE ${home.family} FAMILY LIVES HERE - KEEP THEM SAFE`); return; }
     if (c === WELL.c && r === WELL.r) { showToast('A WISHING WELL. NOTHING HAPPENS... YET'); return; }
     selected = null;
     return;
@@ -1929,14 +1906,15 @@ const inRect = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.
 const toUI = (sx, sy) => ({ x: (sx * dpr) / ui, y: (sy * dpr) / ui });
 const showPanel = () => selected && phase !== 'wave' && phase !== 'end' && !placing && !itemsOpen;
 const showRepair = () => phase === 'home' && !buildMode && !itemsOpen && !showPanel() && repairCost() > 0;
-// Anything but the House and trees can be put away in your items (between waves).
-const canStore = (b) => phase === 'home' && b && b.type !== 'house' && b.type !== 'tree';
+// Anything but trees can be put away in your items (between waves).
+const canStore = (b) => phase === 'home' && b && b.type !== 'tree';
 const storeButton = (b) => (BUILDINGS[b.type].run || BUILDINGS[b.type].decor ? buttons.storeTop : buttons.store);
 
 // Is this screen point on top of a UI element (so it shouldn't pan the map)?
 function onUI(sx, sy) {
   const p = toUI(sx, sy);
-  if (offer || menuOpen || shopOpen || lookOpen || runsOpen || phase === 'end' || phase === 'title' || run.choices) return true;
+  if (offer || menuOpen || shopOpen || lookOpen || runsOpen || settingsOpen || phase === 'end' || phase === 'title' || run.choices) return true;
+  if (inRect(p, buttons.settings)) return true;
   if (phase === 'home' && !showPanel()) { const { bar, tab } = itemsLayout(); if (inRect(p, tab) || (itemsOpen && inRect(p, bar))) return true; }
   return p.y < HUD_H || p.y >= UH - BAR_H || inRect(p, buttons.zoomIn) || inRect(p, buttons.zoomOut)
     || (showRepair() && inRect(p, buttons.repair)) || (showPanel() && inRect(p, buttons.panel));
@@ -2003,20 +1981,6 @@ function onMenuTap(p) {
     selected = null;
     return;
   }
-  if (inRect(p, buttons.menuReset)) {
-    if (performance.now() < resetArmed) {
-      const keep = carryOver();
-      newLife();
-      Object.assign(game, keep);
-      saveGame();
-      resetArmed = 0;
-      showToast('NEW GAME');
-      return;
-    }
-    resetArmed = performance.now() + 2000;
-    showToast('TAP RESET AGAIN TO START OVER');
-    return;
-  }
   if (inRect(p, buttons.menuClose) || !inRect(p, buttons.menu)) menuOpen = false;
 }
 
@@ -2026,6 +1990,7 @@ function onTap(sx, sy) {
     if (inRect(p, buttons.menuClose) || !inRect(p, buttons.menu)) runsOpen = false;
     return;
   }
+  if (settingsOpen) return onSettingsTap(p);
   if (phase === 'title') {
     if (inRect(p, buttons.titlePlay)) { phase = 'home'; homeView(); }
     else if (inRect(p, buttons.titleRuns)) runsOpen = true;
@@ -2050,6 +2015,7 @@ function onTap(sx, sy) {
     if (inRect(p, buttons.skip)) return skipCard();
     return;
   }
+  if (inRect(p, buttons.settings)) { settingsOpen = true; restartTaps = 0; return; }
   if (inRect(p, buttons.zoomIn)) return zoomAt(viewW / 2, viewH / 2, cam.z * 1.5);
   if (inRect(p, buttons.zoomOut)) return zoomAt(viewW / 2, viewH / 2, cam.z / 1.5);
   // The ITEMS tab and bar.
@@ -2521,8 +2487,7 @@ function drawInfoPanel(b, now) {
   const x = box.x + 5, y = box.y + 5;
   const def = BUILDINGS[b.type];
   const lv = b.level || 1;
-  const title = b.type === 'house' ? `HOUSE LV ${lv} - ${HOUSE_LEVELS[lv - 1].name.toUpperCase()}`
-    : def.decor || b.type === 'tree' || def.run ? def.name.toUpperCase() : `${def.name.toUpperCase()} LV ${lv}`;
+  const title = def.decor || b.type === 'tree' || def.run ? def.name.toUpperCase() : `${def.name.toUpperCase()} LV ${lv}`;
   drawText(ctx, title, x, y, PAL.w);
   if (canStore(b)) drawButton(storeButton(b), 'STORE', b.hp >= maxHp(b) && !underConstruction(game, b) ? 'normal' : 'off');
   if (buildMode) {
@@ -2543,8 +2508,6 @@ function drawInfoPanel(b, now) {
   if (b.type === 'tower') {
     const st = towerStats(lv);
     info = `DMG ${st.damage} RNG ${(st.range / T).toFixed(1)}  ${isManned(b) ? 'ARCHER ON DUTY' : 'NO ARCHER - HIRE AT TAVERN'}`;
-  } else if (b.type === 'house') {
-    info = `HOLDS UP TO ${storageCap(lv).gold} GOLD`;
   } else if (b.type === 'tree' || def.decor) {
     info = 'DECORATION - JUST FOR LOOKS';
   }
@@ -2605,11 +2568,10 @@ function drawBuildMenu() {
   ctx.fillStyle = 'rgba(26,28,44,0.5)';
   ctx.fillRect(0, 0, UW, UH);
   panelBox(m);
-  const hl = houseLevel(game);
   drawButton(buttons.tabBuild, 'BUILD', menuTab === 'build' ? 'primary' : 'normal');
   drawButton(buttons.tabLooks, 'LOOKS', menuTab === 'looks' ? 'primary' : 'normal');
   drawButton(buttons.tabStore, 'STORE', menuTab === 'store' ? 'primary' : 'normal');
-  const corner = menuTab === 'store' ? `GEMS ${game.gems}` : `HOUSE LV ${hl}`;
+  const corner = menuTab === 'store' ? `GEMS ${game.gems}` : `G ${game.gold}`;
   drawText(ctx, corner, m.x + m.w - 6 - textWidth(corner), m.y + 8, menuTab === 'store' ? PAL.v : PAL.s);
   if (menuTab === 'store') {
     THEMES.forEach((th, i) => {
@@ -2637,9 +2599,8 @@ function drawBuildMenu() {
     drawButton(buttons.themePrev);
     drawButton(buttons.themeNext);
     buttons.decorRows.forEach((row) => {
-      const limit = limitFor(row.type, hl);
       const block = buildBlock(game, row.type);
-      drawText(ctx, `${BUILDINGS[row.type].name.toUpperCase()}  ${countOf(game, row.type)}/${limit}`, m.x + 6, row.y + 1, limit === 0 ? PAL.S : PAL.w);
+      drawText(ctx, `${BUILDINGS[row.type].name.toUpperCase()}  (${countOf(game, row.type)})`, m.x + 6, row.y + 1, PAL.w);
       drawText(ctx, block || formatCost(BUILD_COST[row.type]), m.x + 6, row.y + 9, block ? PAL.R : PAL.y);
       drawButton(row, 'BUY', block ? 'off' : 'primary');
     });
@@ -2648,18 +2609,13 @@ function drawBuildMenu() {
   }
   buttons.menuRows.forEach((row) => {
     const type = row.type;
-    const limit = limitFor(type, hl);
     const count = countOf(game, type);
     const block = buildBlock(game, type);
     const ry = row.y;
-    drawText(ctx, `${BUILDINGS[type].name.toUpperCase()}  ${count}/${limit}`, m.x + 6, ry + 1, block && limit === 0 ? PAL.S : PAL.w);
+    drawText(ctx, `${BUILDINGS[type].name.toUpperCase()}  (${count})`, m.x + 6, ry + 1, PAL.w);
     drawText(ctx, block || formatCost(BUILD_COST[type]), m.x + 6, ry + 9, block ? PAL.R : PAL.y);
     drawButton(row, 'BUY', block ? 'off' : 'primary');
   });
-  const rr = buttons.menuReset;
-  drawText(ctx, 'START OVER', m.x + 6, rr.y + 1, PAL.s);
-  drawText(ctx, 'TAP TWICE', m.x + 6, rr.y + 9, PAL.S);
-  drawButton(rr, 'RESET', 'normal');
   drawButton(buttons.menuClose);
 }
 
@@ -2685,17 +2641,20 @@ function render(time, dt) {
   };
   // Only what's on screen gets drawn (zoomed out, that saves hundreds of trees).
   const vx0 = -ox / s - 2 * T, vx1 = (canvas.width - ox) / s + T, vy0 = -oy / s - T, vy1 = (canvas.height - oy) / s + 3 * T;
-  const onScreen = (b) => (b.c + sizeOf(b)) * T > vx0 && b.c * T < vx1 && (b.r + sizeOf(b)) * T > vy0 && b.r * T < vy1;
+  const onScreen = (b) => { const z = b.w || sizeOf(b); return (b.c + z) * T > vx0 && b.c * T < vx1 && (b.r + z) * T > vy0 && b.r * T - 2 * T < vy1; };
   const things = [
     ...game.buildings.filter(onScreen).map((b) => ({ y: (b.r + sizeOf(b) - 1) * T, draw: () => drawBuilding(b, now) })),
-    // The village: shops, the well, shopkeepers and townsfolk.
-    ...SHOPS.map((s) => ({ y: (s.r + 1) * T, draw: () => {
-      ctx.drawImage(img.shadow, s.c * T, s.r * T, 2 * T, 2 * T);
-      ctx.drawImage(villageImg(s.id), s.c * T, s.r * T);
+    // The village: buildings, homes, stalls, lamps and gardens (pictures stand on their footprint's bottom edge),
+    // the well, the keepers, and the townsfolk (indoors while a wave is on).
+    ...[...SHOPS, ...HOMES, ...PROPS].filter(onScreen).map((s) => ({ y: (s.r + s.h - 1) * T, draw: () => {
+      if (s.id === 'flowers') { ctx.drawImage(levelImg('flowers', 1, 0, false), s.c * T, s.r * T); return; }
+      const im = villageImg(s.id, s.v || 0);
+      if (s.id !== 'lamp') ctx.drawImage(img.shadow, s.c * T, s.r * T, s.w * T, s.h * T);
+      ctx.drawImage(im, s.c * T + Math.round((s.w * T - im.width) / 2), (s.r + s.h) * T - im.height);
     } })),
     { y: WELL.r * T, draw: () => ctx.drawImage(villageImg('well'), WELL.c * T, WELL.r * T) },
     ...SHOPKEEPERS.map((k) => ({ y: k.r * T, draw: () => person(k.look, k.c * T, k.r * T, 'down', false, 0) })),
-    ...townsfolk.map((v) => ({ y: v.y, draw: () => person(v.look, v.x, v.y, v.dir, v.moving, v.t) })),
+    ...(phase === 'wave' ? [] : townsfolk.map((v) => ({ y: v.y, draw: () => person(v.look, v.x, v.y, v.dir, v.moving, v.t) }))),
     ...(game.pets.active && !hero.inside ? [{ y: pet.y - 0.1, draw: () => {
       const frame = pet.moving ? Math.floor(pet.t * 8) % 2 : 0;
       ctx.drawImage(petImg(game.pets.active, frame), Math.round(pet.x), Math.round(pet.y + 2));
@@ -2790,7 +2749,6 @@ function render(time, dt) {
   // Top bar: resources on the left; builder or wave on the right.
   ctx.fillStyle = 'rgba(26,28,44,0.85)';
   ctx.fillRect(0, 0, UW, HUD_H);
-  const h = house();
   if (phase === 'home') {
     let x = 6;
     for (const r of RES) {
@@ -2803,17 +2761,13 @@ function render(time, dt) {
   } else {
     drawText(ctx, `G ${game.gold}`, 6, 6, PAL.y);
     const right = `WAVE ${run.wave}`;
-    drawText(ctx, right, UW - 6 - textWidth(right), 6, PAL.w);
-    // House health in the middle of the top bar.
-    const bw = 40, bx = Math.round(UW / 2 - bw / 2);
-    drawText(ctx, 'HOUSE', bx - 24, 6, PAL.s);
-    ctx.fillStyle = PAL.t;
-    ctx.fillRect(bx, 6, bw, 5);
-    ctx.fillStyle = h.hp / maxHp(h) > 0.3 ? PAL.l : PAL.R;
-    ctx.fillRect(bx, 6, Math.round((bw * h.hp) / maxHp(h)), 5);
+    drawText(ctx, right, UW - 34 - textWidth(right), 6, PAL.w);
+    const mid = `ZOMBIES LEFT ${battle.remaining}`;
+    drawText(ctx, mid, Math.round((UW - textWidth(mid)) / 2), 6, PAL.R);
   }
 
   // Zoom buttons, repair button, info panel
+  drawGear(buttons.settings);
   drawButton(buttons.zoomIn);
   drawButton(buttons.zoomOut);
   if (showRepair()) drawButton(buttons.repair, `REPAIR ${repairCost()}G`, game.gold > 0 ? 'good' : 'off');
@@ -2876,14 +2830,69 @@ function render(time, dt) {
       drawButton(buttons.buy);
       drawButton(buttons.cancel);
     } else {
-      centeredText('YOUR HOUSE FELL - GAME OVER', b.y + 6, PAL.R);
+      centeredText('A ZOMBIE GOT THROUGH - GAME OVER', b.y + 6, PAL.R);
       centeredText(`YOU SURVIVED ${Math.max(0, run.wave - 1)} WAVES - ${run.kills} KILLS`, b.y + 16, PAL.w);
       centeredText(run.rank === 1 ? 'NEW BEST RUN!' : run.rank ? `TOP RUN NUMBER ${run.rank}!` : `GEMS +${run.gems}`, b.y + 26, PAL.y);
       drawButton(buttons.goHome, 'HOME');
     }
   }
   if (phase === 'title') drawTitle(time);
+  if (settingsOpen) drawSettings();
   if (runsOpen) drawTopRuns();
+}
+
+// ---------- Settings (the gear, top right) ----------
+// CONTINUE, RESTART and TOP RUNS. The game pauses while it's open. RESTART takes three taps (each within a few
+// seconds of the last) so it can't happen by accident; the run you abandon still goes into your top runs.
+let settingsOpen = false;
+let restartTaps = 0, restartAt = 0;
+const RESTART_LABELS = ['RESTART', 'ARE YOU SURE?', 'REALLY? TAP AGAIN'];
+
+function onSettingsTap(p) {
+  if (inRect(p, buttons.setContinue) || !inRect(p, buttons.settingsBox)) { settingsOpen = false; restartTaps = 0; return; }
+  if (inRect(p, buttons.setRuns)) { runsOpen = true; return; }
+  if (inRect(p, buttons.setRestart)) {
+    if (performance.now() - restartAt > 4000) restartTaps = 0;
+    restartAt = performance.now();
+    if (++restartTaps < 3) return;
+    restartTaps = 0;
+    settingsOpen = false;
+    restartRun();
+  }
+}
+
+// Give up this run and start a new one (it still counts as a life and a top run).
+function restartRun() {
+  battle.active = false;
+  recordRun();
+  const keep = carryOver();
+  newLife();
+  Object.assign(game, keep);
+  saveGame();
+  showToast('A NEW RUN BEGINS');
+}
+
+function drawSettings() {
+  const b = buttons.settingsBox;
+  ctx.fillStyle = 'rgba(26,28,44,0.6)';
+  ctx.fillRect(0, 0, UW, UH);
+  panelBox(b);
+  centeredText('PAUSED', b.y + 6, PAL.y);
+  drawButton(buttons.setContinue);
+  const fresh = performance.now() - restartAt <= 4000 ? restartTaps : 0;
+  drawButton(buttons.setRestart, RESTART_LABELS[fresh], fresh ? 'primary' : 'normal');
+  drawButton(buttons.setRuns);
+}
+
+// A little pixel gear for the settings button.
+function drawGear(b) {
+  drawButton(b, '');
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  ctx.fillStyle = PAL.w;
+  ctx.fillRect(cx - 4, cy - 4, 8, 8);
+  for (const [dx, dy] of [[-1, -6], [-1, 4], [-6, -1], [4, -1], [-5, -5], [3, -5], [-5, 3], [3, 3]]) ctx.fillRect(cx + dx, cy + dy, 2, 2);
+  ctx.fillStyle = PAL.S;
+  ctx.fillRect(cx - 1, cy - 1, 2, 2);
 }
 
 // ---------- Home screen ----------
@@ -2902,10 +2911,10 @@ function drawTitle(time) {
   centeredText('HOW LONG CAN YOU LAST?', y0 + 28, PAL.w);
   const best = game.records.runs[0];
   centeredText(best ? `BEST: ${best.waves} WAVES` : 'NO RUNS YET', y0 + 44, PAL.s);
-  centeredText(run.wave > 0 ? `YOUR RUN: WAVE ${run.wave} - HOUSE LV ${houseLevel(game)}` : `LIFE ${game.records.lives}`, y0 + 56, PAL.l);
+  centeredText(run.wave > 0 ? `YOUR RUN: WAVE ${run.wave}` : `LIFE ${game.records.lives}`, y0 + 56, PAL.l);
   drawButton(buttons.titlePlay, run.wave > 0 ? 'CONTINUE' : 'NEW RUN', 'primary');
   drawButton(buttons.titleRuns);
-  centeredText('IF YOUR HOUSE FALLS, THE RUN IS OVER', UH - BAR_H + 16, PAL.s);
+  centeredText('IF ONE ZOMBIE GETS THROUGH, IT IS OVER', UH - BAR_H + 16, PAL.s);
 }
 
 function drawTopRuns() {
@@ -2922,7 +2931,7 @@ function drawTopRuns() {
     const d = new Date(r.at);
     drawText(ctx, `${i + 1}.`, m.x + 6, y, i === 0 ? PAL.y : PAL.s);
     drawText(ctx, `WAVE ${r.waves}`, m.x + 26, y, PAL.w);
-    drawText(ctx, `${r.kills} KILLS H${r.house} HERO${r.hero}  ${d.getMonth() + 1}/${d.getDate()}`, m.x + 70, y, PAL.s);
+    drawText(ctx, `${r.kills} KILLS HERO${r.hero}  ${d.getMonth() + 1}/${d.getDate()}`, m.x + 70, y, PAL.s);
   });
   drawButton(buttons.menuClose);
 }
@@ -2935,6 +2944,7 @@ window.defense = {
   get offer() { return offer; },
   get phase() { return phase; },
   get run() { return run; },
+  get hero() { return hero; },
   get selected() { return selected; },
   battle,
   get villagers() { return villagers; },
@@ -2980,11 +2990,10 @@ window.defense = {
   },
   // Pretend `hours` have passed for resource buildings (testing only).
   passHours: (hours) => { for (const b of game.buildings) if (b.since) b.since -= hours * 3_600_000; },
-  // Buy the buyable plot nearest the House, if affordable. Returns true if something was bought.
+  // Buy the buyable plot nearest the guard point, if affordable. Returns true if something was bought.
   buyNextPlot: () => {
     if (game.gold < landPrice(game.bought)) return false;
-    const h = house();
-    const [hc, hr] = chunkOfTile(h.c + 1, h.r + 1);
+    const [hc, hr] = chunkOfTile(GUARD_POINT.c, GUARD_POINT.r);
     let best = null, bd = Infinity;
     for (let cy = LAND0; cy <= LAND1; cy++) {
       for (let cx = LAND0; cx <= LAND1; cx++) {
@@ -3002,17 +3011,18 @@ window.defense = {
 
 // Advance the game by dt seconds (at most 0.05 at a time, so nothing skips past anything).
 function tick(dt) {
+  if (settingsOpen) return; // paused
   if (phase !== 'end' && phase !== 'title') game.clock += dt * 1000 * TIME_SCALE;
   if (phase === 'wave') {
     for (let i = 0; i < speed; i++) battle.update(dt);
-    if (battle.houseLost) endRun();
+    if (battle.villageLost) endRun();
     else if (battle.cleared) waveCleared();
   }
   heroKeyStep();
   if (villagers.length !== game.npcs.length || villagers.some((v, i) => v.npc !== game.npcs[i])) syncNpcBodies();
   for (const v of villagers) npcThink(v, dt);
   heroThink(dt);
-  for (const v of [hero, ...villagers, ...townsfolk]) if (!v.atPost) updateVillager(v, dt);
+  for (const v of [hero, ...villagers, ...(phase === 'wave' ? [] : townsfolk)]) if (!v.atPost) updateVillager(v, dt);
   checkGoals(dt);
   updatePet(dt);
   // Walk away from something and its panel closes (you have to be in reach to use it).
@@ -3023,7 +3033,7 @@ function tick(dt) {
     cam.y += (hero.y + T / 2 - cam.y) * k;
     clampCam();
   }
-  // The builder only hands over finished work while you're home (no mid-fight House heals).
+  // The builder only hands over finished work between waves.
   const done = phase === 'home' ? finishBuilder(game, clock()) : null;
   if (done) {
     const p = centerOf(done);

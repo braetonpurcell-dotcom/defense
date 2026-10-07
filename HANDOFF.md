@@ -4,6 +4,15 @@ Written 2026-10-06 at the end of a long build session, right before the conversa
 Read this top to bottom before touching anything. Where this file and the code disagree, **trust the code**
 and fix this file. Where this file and `DESIGN.md` / `QUESTIONS.md` / `README.md` disagree, this file is newer.
 
+## 0a. READ FIRST: v2 = defend the village (no House)
+See DESIGN.md's "v2 DESIGN" section. The House is gone, along with every House gate and cap.
+- The zombies' goal is the village entrance just past the bridge (`villageGateRow`, `isVillageGate`). One zombie there ends the run (`battle.villageLost`, `breakthrough`).
+- `GUARD_POINT` replaces the House as the anchor for fighters, the hero, hires and reach.
+- The village is data: `SHOPS` (with w/h and keepers), `HOMES`, `PROPS` and art in `js/art-village.js` `VILLAGE_ART`/`villageRows`.
+- `economy.js` has no limits. `config.js` has no `LIMITS`, `storageCap` or `npcCap`. Fighters scale with `waveLevel(run.wave)`.
+- Settings popup: `onSettingsTap`, `restartRun`, `drawSettings`, `drawGear`.
+- Wherever section 0 below mentions the House, the House cap or House levels, that's out of date.
+
 ## 0. READ FIRST: the roguelike pivot (later on 2026-10-06; this overrides older sections below)
 
 The owner changed direction at the end of the session. Where sections 3 to 11 describe the old
