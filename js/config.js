@@ -93,9 +93,10 @@ export const hpFor = (type, level = 1) => (BUILDINGS[type].run
   ? Math.round(BUILDINGS[type].hp * CARD_POWER)
   : Math.round(BUILDINGS[type].hp * 1.45 ** (level - 1)));
 
-// Archer tower stats per level: damage +35%, range +0.15 tiles, slightly faster.
+// Archer tower stats per level: damage +45%, range +0.15 tiles, slightly faster. (The steep damage curve
+// and the flat upgrade prices below keep 'upgrade a tower' competitive with 'build another one'.)
 export const towerStats = (level = 1) => ({
-  damage: Math.round(8 * 1.35 ** (level - 1)),
+  damage: Math.round(8 * 1.45 ** (level - 1)),
   range: (4 + 0.15 * (level - 1)) * T,
   rate: Math.max(0.45, 0.8 - 0.035 * (level - 1)),
 });
@@ -107,7 +108,7 @@ export const towerStats = (level = 1) => ({
 // Cost to build a new one. Gold is the only money: you earn it by killing zombies.
 export const BUILD_COST = {
   wall: { gold: 10 },
-  tower: { gold: 150 },
+  tower: { gold: 200 },
   flowers: { gold: 5 },
   lantern: { gold: 15 },
   banner: { gold: 25 },
@@ -116,18 +117,10 @@ export const BUILD_COST = {
   skulls: { gold: 80 },
 };
 
-// Cost and build time (seconds) to go from `level` to `level + 1`.
-// Walls are instant (like Clash of Clans). Everything else uses the builder and a timer.
-// Roguelike pacing: game time runs TIME_SCALE times faster than real time and only while you play,
-// so a 1-hour upgrade takes a real minute.
-export const TIME_SCALE = 60;
-const MIN = 60, HOUR = 3600;
-// Gold only (from zombies). First guess; tune from playtests.
-const goldSteps = (golds, times) => golds.map((gold, i) => ({ gold, time: times[i] }));
+// Gold to go from `level` to `level + 1`. Every upgrade is instant: gold is the only limit.
 const UPGRADES = {
-  wall: [10, 25, 60, 150, 350, 800, 1800, 4000, 9000].map((gold) => ({ gold, time: 0 })),
-  tower: goldSteps([60, 150, 350, 800, 1600, 3000, 5000, 8000, 12000],
-    [30, 2 * MIN, 10 * MIN, 30 * MIN, 1 * HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, 24 * HOUR]),
+  wall: [10, 25, 60, 150, 350, 800, 1800, 4000, 9000].map((gold) => ({ gold })),
+  tower: [50, 90, 150, 250, 400, 650, 1000, 1600, 2500].map((gold) => ({ gold })),
 };
 export const upgradeCost = (type, level) => UPGRADES[type]?.[level - 1] ?? null;
 
@@ -167,43 +160,42 @@ export const CARDS = {
 
 // One random twist per run: an upside and a downside.
 export const OMENS = [
-  { id: 'bloodmoon', name: 'Blood Moon', good: 'KILL GOLD X2', bad: 'ZOMBIES +15% HP', hpMul: 1.15, goldMul: 2 },
-  { id: 'fog', name: 'Thick Fog', good: 'SEE 4 CARDS', bad: 'TOWER RANGE -0.5', rangeAdd: -0.5, choices: 4 },
-  { id: 'zombierush', name: 'Runner Rush', good: 'TRAPS COME IN PAIRS', bad: 'RUNNERS FROM WAVE 1', runners: true, trapPairs: true },
-  { id: 'luckystars', name: 'Lucky Stars', good: 'RARER CARDS', bad: 'ZOMBIES 10% FASTER', luck: true, speedMul: 1.1 },
-  { id: 'calm', name: 'Calm Skies', good: 'NOTHING STRANGE', bad: 'NOTHING STRANGE' },
+  { id: 'bloodmoon', name: 'Blood Moon', good: 'KILL GOLD +50%', bad: 'ZOMBIES +25% HP', hpMul: 1.25, goldMul: 1.5 },
+  { id: 'fog', name: 'Thick Fog', good: 'SEE 4 CARDS', bad: 'TOWER RANGE -0.25', rangeAdd: -0.25, choices: 4 },
+  { id: 'zombierush', name: 'Runner Rush', good: 'TRAP AND WALL CARDS X2', bad: 'EXTRA RUNNERS FROM WAVE 2', runners: true, pairs: true },
+  { id: 'luckystars', name: 'Lucky Stars', good: 'RARER CARDS', bad: 'ZOMBIES 5% FASTER', luck: true, speedMul: 1.05 },
+  { id: 'calm', name: 'Calm Skies', good: 'WAVE BONUS +25%', bad: 'NOTHING STRANGE', bonusMul: 1.25 },
 ];
 
 // ---------- The village ----------
-// Pets: one walks with you at a time and gives its perk while it's fed. Never dies; just sulks.
+// Pets: one walks with your hero at a time and gives its perk. Never dies.
 export const PETS = {
   dog: { name: 'Dog', price: { gold: 300 }, perk: 'YOUR HERO WALKS 50% FASTER' },
   cat: { name: 'Cat', price: { gold: 250 }, perk: 'ZOMBIES DROP +20% GOLD' },
   owl: { name: 'Owl', price: { gold: 400 }, perk: '+1 CARD REROLL A RUN' },
 };
-export const PET_MEAL = { gold: 10 };     // one meal keeps a pet happy for PET_FED_HOURS
-export const PET_FED_HOURS = 48;
 
 // Blacksmith: building kits that go straight into your items (place them from the ITEMS bar).
 export const BLACKSMITH_GOODS = [
   { name: 'WALL BUNDLE X10', type: 'wall', n: 10, price: { gold: 90 }, about: 'TEN WOODEN WALLS' },
-  { name: 'ARCHER TOWER KIT', type: 'tower', n: 1, price: { gold: 150 }, about: 'NEEDS AN ARCHER TO SHOOT' },
+  { name: 'ARCHER TOWER KIT', type: 'tower', n: 1, price: { gold: 200 }, about: 'SHOOTS ANY ZOMBIE IN RANGE' },
   { name: 'SPIKE PITS X2', type: 'spikes', n: 2, price: { gold: 70 }, about: 'TRAPS FOR THE PATH' },
   { name: 'BARRICADES X3', type: 'barricade', n: 3, price: { gold: 75 }, about: 'TOUGH WALLS FOR THIS RUN' },
 ];
 // Chapel: pray for luck (+1 card reroll this run).
 export const CHAPEL_PRAYER = { gold: 50 };
 
-// General store: handy one-off items.
+// General store: run upgrades for gold (the same blessings the cards give; they last this run).
 export const STORE_ITEMS = {
-  snack: { name: 'Builder Snack', price: { gold: 30 }, about: 'BUILDER 10 MIN FASTER' },
+  arrows: { name: 'Sharp Arrows', price: { gold: 150 }, about: 'TOWERS +25% DAMAGE THIS RUN (MAX 3)', blessing: 'arrows' },
+  hawkeye: { name: 'Hawk Eye', price: { gold: 250 }, about: 'TOWERS +1 RANGE THIS RUN', blessing: 'hawkeye' },
+  stonemason: { name: 'Stonemason', price: { gold: 120 }, about: 'WALLS +50% HP THIS RUN', blessing: 'stonemason' },
 };
 
 // ---------- NPCs: your people, with jobs (you're the director) ----------
 // Hired at the Tavern (in the village). No cap: gold is the only limit.
+// (Archer towers shoot on their own: there is no archer role to hire.)
 export const NPC_ROLES = {
-  archer: { name: 'Archer', price: { gold: 100 }, about: 'MANS A TOWER SO IT SHOOTS',
-    look: { skin: '#f4c8a0', hair: '#5a3a1f', shirt: '#257179', pants: '#29366f' } },
   builder: { name: 'Builder', price: { gold: 150 }, about: 'FIXES DAMAGED WALLS FOR FREE',
     look: { skin: '#e8b088', hair: '#ffcd75', shirt: '#ef7d57', pants: '#566c86' } },
   // Fighters: they go out and fight zombies during a wave. Zombies hit back; a fighter who drops
@@ -224,7 +216,7 @@ export const GUARD_RADIUS = 9;   // tiles from the guard point a fighter will go
 // their look. They shoot any zombie in range. If they drop, they get up when the wave ends.
 export const HERO_MAX_LEVEL = 10;
 export const heroStats = (level) => ({
-  hp: Math.round(160 * 1.3 ** (level - 1)),
+  hp: Math.round(200 * 1.3 ** (level - 1)),
   damage: 12 * 1.28 ** (level - 1),
   rate: 0.7,
   range: 3.5 + 0.25 * (level - 1),
@@ -234,21 +226,21 @@ export const heroUpgradeCost = (level) => ({ gold: Math.round((100 * 1.75 ** (le
 
 // ---------- Hiring is roguelike ----------
 // The Tavern never has a fixed menu: it shows APPLICANTS random people (role, name, trait, price).
-// The board reshuffles after every run, or right away for REROLL_PRICE. You work with who turns up.
+// The board reshuffles after every wave, or right away for REROLL_PRICE. You work with who turns up.
 export const APPLICANTS = 3;
-export const REROLL_PRICE = { gold: 40 };
+export const REROLL_PRICE = { gold: 30 };
 // Every applicant has one trait. Some are good, some are a trade-off.
-//   speed: walking speed x   hp: fighter health x   power: fighter damage / builder repair / tower damage x
-//   range: tiles added to a manned tower or a gunner   price: hire price x
+//   speed: walking speed x   hp: fighter health x   power: fighter damage / builder repair x
+//   range: tiles added to a gunner   price: hire price x
 //   roles: only these roles can have it (no roles = anyone)
 export const TRAITS = {
   quick:  { name: 'QUICK',     about: 'WALKS FAST',              speed: 1.35 },
   tough:  { name: 'TOUGH',     about: 'LOTS OF HEALTH',          hp: 1.5, roles: ['guard', 'gunner'] },
-  strong: { name: 'STRONG',    about: 'HITS AND WORKS HARDER',   power: 1.3, roles: ['archer', 'builder', 'guard', 'gunner'] },
-  eagle:  { name: 'EAGLE EYE', about: 'SEES FURTHER (+1 RANGE)', range: 1, roles: ['archer', 'gunner'] },
-  cheap:  { name: 'CHEAP',     about: 'WORKS FOR LESS',          price: 0.6 },
-  lazy:   { name: 'LAZY',      about: 'SLOW BUT VERY CHEAP',     speed: 0.7, price: 0.45 },
-  hero:   { name: 'HEROIC',    about: 'GREAT AT EVERYTHING',     speed: 1.2, hp: 1.3, power: 1.25, price: 1.8 },
+  strong: { name: 'STRONG',    about: 'HITS AND WORKS HARDER',   power: 1.3 },
+  eagle:  { name: 'EAGLE EYE', about: 'SEES FURTHER (+1 RANGE)', range: 1, roles: ['gunner'] },
+  cheap:  { name: 'CHEAP',     about: 'WORKS FOR LESS',          price: 0.65 },
+  lazy:   { name: 'LAZY',      about: 'SLOW AND WEAK, VERY CHEAP', speed: 0.7, power: 0.8, price: 0.5 },
+  hero:   { name: 'HEROIC',    about: 'GREAT AT EVERYTHING',     speed: 1.2, hp: 1.3, power: 1.25, price: 1.4, roles: ['guard', 'gunner'] },
 };
 export const NPC_NAMES = ['ADA', 'BO', 'CY', 'DOT', 'ED', 'FAY', 'GUS', 'HAL', 'IVY', 'JO', 'KIT', 'LEO', 'MAE',
   'NED', 'OLA', 'PIP', 'QUIN', 'ROY', 'SAL', 'TEX', 'UMA', 'VIC', 'WES', 'XAN', 'YUL', 'ZED'];
@@ -262,7 +254,7 @@ export const GOALS = [
   { id: 'builder', text: 'HIRE A BUILDER AT THE VILLAGE TAVERN', reward: { gold: 100 }, check: (g) => g.npcs.some((n) => n.role === 'builder') },
   { id: 'wave3', text: 'SURVIVE 3 WAVES', reward: { gold: 150 }, check: (g) => (g.stats?.bestWave || 0) >= 3 },
   { id: 'fighter', text: 'HIRE A GUARD OR GUNNER', reward: { gold: 150 }, check: (g) => g.npcs.some((n) => n.role === 'guard' || n.role === 'gunner') },
-  { id: 'tower3', text: 'BUILD A 3RD TOWER AND MAN IT', reward: { gold: 200 }, check: (g) => g.npcs.filter((n) => n.role === 'archer' && n.post).length >= 3 },
+  { id: 'tower3', text: 'BUILD A 3RD ARCHER TOWER', reward: { gold: 200 }, check: (g) => g.buildings.filter((b) => b.type === 'tower' && b.hp > 0).length >= 3 },
   { id: 'tower3lv', text: 'UPGRADE A TOWER TO LEVEL 3', reward: { gold: 250 }, check: (g) => g.buildings.some((b) => b.type === 'tower' && b.level >= 3) },
   { id: 'wave7', text: 'SURVIVE 7 WAVES', reward: { gold: 300 }, check: (g) => (g.stats?.bestWave || 0) >= 7 },
   { id: 'king', text: 'SURVIVE WAVE 10 AND BEAT THE KING', reward: { gold: 500, gems: 5 }, check: (g) => (g.stats?.bestWave || 0) >= 10 },
@@ -279,30 +271,32 @@ export const DETOUR_PER_HP = 0.5;
 // speed in pixels per second, rate = seconds between attacks.
 // All monsters are zombies (for now).
 export const MONSTERS = {
-// (Speeds were raised 30% when the world grew: the road from the den is ~45 tiles now.)
-  zombie: { name: 'Zombie', hp: 20, speed: 23, damage: 4, rate: 1.0, gold: 2 },
-  runner: { name: 'Runner', hp: 14, speed: 42, damage: 3, rate: 0.7, gold: 3 },
-  brute: { name: 'Brute', hp: 70, speed: 17, damage: 12, rate: 1.2, gold: 6 },
-  king: { name: 'Zombie King', hp: 600, speed: 13, damage: 30, rate: 1.5, gold: 50, big: true },
+// (The path from the den to the village gate is ~72 tiles; quiet stretches fast-forward, see main.js tick.)
+  zombie: { name: 'Zombie', hp: 20, speed: 29, damage: 4, rate: 1.0, gold: 2 },
+  runner: { name: 'Runner', hp: 14, speed: 52, damage: 3, rate: 0.7, gold: 3 },
+  brute: { name: 'Brute', hp: 70, speed: 21, damage: 12, rate: 1.2, gold: 6 },
+  king: { name: 'Zombie King', hp: 400, speed: 16, damage: 30, rate: 1.5, gold: 100, big: true },
 };
 
-// Zombies get tougher each wave. level is waveLevel(wave) (see above).
-export const hpScale = (wave, level = 1) => (1 + 0.22 * (wave - 1)) * 1.4 ** (level - 1);
+// Zombies get tougher each wave: health grows steadily with a gentle curve on top (x4.2 by wave 10, x10 by
+// wave 20), damage with waveLevel. Gold grows at a similar rate, so a wave's zombies are worth roughly the
+// same share of what it takes to kill them all the way up.
+export const hpScale = (wave) => (1 + 0.25 * (wave - 1)) * 1.03 ** (wave - 1);
 export const damageScale = (level = 1) => 1 + 0.35 * (level - 1);
 
 // Gold: the only income. Tougher zombies pay more. KILL_GOLD multiplies every zombie's gold.
 export const KILL_GOLD = 3;
-export const goldScale = (level = 1) => 1 + 0.5 * (level - 1);
-export const killGold = (zombieGold, wave) => Math.round(zombieGold * KILL_GOLD * goldScale(waveLevel(wave)));
+export const goldScale = (wave) => 1 + 0.22 * (wave - 1);
+export const killGold = (zombieGold, wave) => Math.round(zombieGold * KILL_GOLD * goldScale(wave));
 // Gold for clearing a wave.
-export const waveBonus = (wave) => Math.round((20 + 6 * wave) * goldScale(waveLevel(wave)));
+export const waveBonus = (wave) => Math.round((20 + 6 * wave) * goldScale(wave));
 
 // Who comes out of the cave, in order. gap = seconds until the next one.
 export function waveList(wave, omen = {}) {
   const out = [];
   const add = (type, count, gap) => { for (let i = 0; i < count; i++) out.push({ type, gap }); };
   add('zombie', 3 + 2 * wave, 1.0);
-  if (omen.runners) add('runner', Math.ceil(Math.max(wave, 2) * 1.5), 0.6);
+  if (omen.runners && wave >= 2) add('runner', Math.ceil(wave * 1.2), 0.6);
   else if (wave >= 3) add('runner', wave, 0.6);
   if (wave >= 5) add('brute', Math.floor((wave - 3) / 2), 2.0);
   if (wave % BOSS_EVERY === 0) add('king', wave / BOSS_EVERY, 3);

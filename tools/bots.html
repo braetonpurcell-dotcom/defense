@@ -21,12 +21,12 @@
 </head>
 <body>
   <h1>Bot testers</h1>
-  <p>Each bot plays the real game, fast-forwarded. "Cleared" is waves survived out of 10.</p>
+  <p>Each bot plays the real game, fast-forwarded, until a zombie gets through. "Waves" is how many it survived. Bots never design a base (no funnels, no hero moves), so treat this as a smoke test, not balance data.</p>
   <button id="run">Run all bots</button>
-  <label>Seasons each <input id="seasons" type="number" value="3" min="1" max="20"></label>
+  <label>Lives each <input id="seasons" type="number" value="3" min="1" max="20"></label>
   <span id="status"></span>
-  <table id="out"><thead><tr><th>Bot</th><th>Run</th><th>Omen</th><th>Cleared</th><th>Earned</th><th>Gold</th><th>Towers</th><th>Land</th><th>Run length</th></tr></thead><tbody></tbody></table>
-  <table id="summary"><thead><tr><th>Bot</th><th>Avg cleared</th><th>Best</th><th>Worst</th><th>Wins</th></tr></thead><tbody></tbody></table>
+  <table id="out"><thead><tr><th>Bot</th><th>Life</th><th>Omen</th><th>Waves</th><th>Earned</th><th>Gold left</th><th>Towers</th><th>Plots</th><th>Run length</th></tr></thead><tbody></tbody></table>
+  <table id="summary"><thead><tr><th>Bot</th><th>Avg waves</th><th>Best</th><th>Worst</th></tr></thead><tbody></tbody></table>
   <iframe id="game" src="../index.html?bots=1"></iframe>
   <script type="module">
     import { BOTS, playSeasons } from '../js/bots.js';
@@ -50,14 +50,14 @@
         status.textContent = `${bot.name} is playing...`;
         const rows = await playSeasons(d, bot, seasons, (r) => {
           const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${bot.name}</td><td>${r.season}</td><td>${r.omen}</td><td class="${r.won ? 'won' : 'lost'}">${r.cleared}/10</td>`
+          tr.innerHTML = `<td>${bot.name}</td><td>${r.season}</td><td>${r.omen}</td><td>${r.cleared}</td>`
             + `<td>+${r.earned}</td><td>${r.gold}</td><td>${r.towers}</td><td>${r.land}</td><td>${r.minutes} min</td>`;
           tbody.append(tr);
         });
         const cleared = rows.map((r) => r.cleared);
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${bot.name}</td><td>${(cleared.reduce((a, b) => a + b, 0) / cleared.length).toFixed(1)}</td>`
-          + `<td>${Math.max(...cleared)}</td><td>${Math.min(...cleared)}</td><td>${rows.filter((r) => r.won).length}/${rows.length}</td>`;
+          + `<td>${Math.max(...cleared)}</td><td>${Math.min(...cleared)}</td>`;
         sbody.append(tr);
       }
       status.textContent = 'Done.';

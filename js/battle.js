@@ -54,6 +54,7 @@ const tileCenter = (c, r) => ({ x: c * T + T / 2, y: r * T + T / 2 });
 
 export class Battle {
   // world: { buildings(), goals() -> [{c, r}] (the village entrance), walkable(c, r), cave() -> {c, r},
+  //          fighters() -> bodies zombies can fight, hitFighter(body, damage),
   //          onKill(monster), onDestroyed(building), onBreakthrough(monster),
   //          maxHp(building), run() -> { blessings, omen } }
   constructor(world) {
@@ -75,6 +76,16 @@ export class Battle {
     this.secondWindUsed = false;
     this.cooldown = new WeakMap(); // tower -> seconds until next shot
     this.flash = new WeakMap();    // building -> seconds of white hit flash
+    this.flowDirty = false;
+    this.fighterList = [];
+  }
+
+  // The wave is over (cleared): nothing left to fight, no hit flashes left lit.
+  endWave() {
+    this.active = false;
+    this.monsters = [];
+    this.shots = [];
+    this.flash = new WeakMap();
   }
 
   get mods() {
@@ -106,7 +117,8 @@ export class Battle {
     this.bmap = bmap;
     this.traps = this.w.buildings().filter((b) => isTrap(b) && b.hp > 0);
 
-    const dist = new Float32Array(N * NR).fill(Infinity); // N wide × NR tall, index r * N + c
+    const dist = this.distBuf ||= new Float32Array(N * NR); // N wide × NR tall, index r * N + c
+    dist.fill(Infinity);
     // Cost of stepping onto tile i: 1, plus the effort of smashing whatever stands there.
     const enterCost = (i) => {
       const b = bmap.get(i);
@@ -150,18 +162,21 @@ export class Battle {
         this.spawnClock = s.gap;
       }
     }
+    this.fighterList = this.w.fighters?.() || [];
     for (const m of this.monsters) this.updateMonster(m, dt);
     this.updateTowers(dt);
     this.updateShots(dt);
     this.effects = this.effects.filter((e) => (e.t += dt) < e.life);
     this.monsters = this.monsters.filter((m) => !m.dead);
+    // A building fell (or a builder put one back) this update: the routes change once, at the end.
+    if (this.flowDirty) { this.flowDirty = false; this.recomputeFlow(); }
   }
 
   spawn(type) {
     const def = MONSTERS[type];
     const cave = this.w.cave();
     const c = cave.c + (this.spawnCount++ % 2);
-    const hp = Math.round(def.hp * hpScale(this.wave, this.level) * (this.mods.omen.hpMul || 1));
+    const hp = Math.round(def.hp * hpScale(this.wave) * (this.mods.omen.hpMul || 1));
     this.monsters.push({
       type, def, hp, maxHp: hp, damage: Math.round(def.damage * damageScale(this.level)),
       c, r: cave.r, x: c * T + T / 2, y: cave.r * T + T / 2,
@@ -209,7 +224,7 @@ export class Battle {
     m.attacking = null;
     if (m.stun > 0) return;
     // A fighter standing in the way gets fought first (fighter x/y is the top-left of their tile).
-    const foe = this.w.fighters?.().find((f) => Math.hypot(f.x + T / 2 - m.x, f.y + T / 2 - m.y) < 15);
+    const foe = this.fighterList.find((f) => !f.down && Math.hypot(f.x + T / 2 - m.x, f.y + T / 2 - m.y) < 15);
     if (foe) {
       m.attacking = foe;
       m.atk -= dt;
@@ -274,7 +289,7 @@ export class Battle {
     this.flash.set(b, 0.12);
     if (b.hp > 0) return;
     this.w.onDestroyed(b);
-    this.recomputeFlow();
+    this.flowDirty = true;
   }
 
   // A zombie reached the village. That's the run over - unless Second Wind is still unused: then that
@@ -294,13 +309,7 @@ export class Battle {
   // Stats for anything that shoots, with run blessings and the omen applied.
   towerDef(b) {
     let d;
-    if (b.type === 'tower') {
-      // The archer inside brings their trait (STRONG hits harder, EAGLE EYE sees further).
-      const crew = this.w.crew?.(b) || {};
-      d = { ...towerStats(b.level || 1), shot: 'arrow' };
-      d.damage *= crew.power || 1;
-      d.range += (crew.range || 0) * T;
-    }
+    if (b.type === 'tower') d = { ...towerStats(b.level || 1), shot: 'arrow' };
     else {
       const c = CARDS[b.type];
       if (!c || c.kind !== 'tower') return null;
@@ -320,13 +329,13 @@ export class Battle {
         if (f <= 0) this.flash.delete(b); else this.flash.set(b, f);
       }
       if (b.hp <= 0) continue;
-      // Your towers need an archer inside to shoot (run-card towers man themselves).
-      if (b.type === 'tower' && this.w.manned && !this.w.manned(b)) continue;
-      const def = this.towerDef(b);
-      if (!def) continue;
+      if (b.type !== 'tower' && CARDS[b.type]?.kind !== 'tower') continue;
+      // Cooldown first: most towers can't fire this update, so don't build their stats.
       const cd = (this.cooldown.get(b) || 0) - dt;
       this.cooldown.set(b, cd);
       if (cd > 0) continue;
+      const def = this.towerDef(b);
+      if (!def) continue;
       const s = sizeOf(b);
       const cx = (b.c + s / 2) * T, cy = b.r * T + 6;
 

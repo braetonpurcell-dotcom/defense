@@ -25,8 +25,6 @@ export const PAL = {
   x: 'rgba(26,28,44,0.28)', // shadow
 };
 
-// Palette swaps.
-export const PAL_RED = { ...PAL, u: '#b13e53', U: '#5d275d' };   // second villager
 // Zombie variants (palette swaps of the one zombie sprite).
 export const PAL_RUNNER = { ...PAL, u: '#b13e53', U: '#5d275d', a: '#a3b88c' };            // red shirt, paler
 export const PAL_BRUTE = { ...PAL, u: '#566c86', U: '#333c57', a: '#7a8a6a', A: '#4a5a40' }; // grey, heavier
@@ -71,87 +69,7 @@ export const SPRITES = {
     '............',
   ]),
 
-  wall: mirror([
-    '............',
-    '............',
-    '............',
-    '............',
-    'kkkkkkkkkkkk',
-    'ksssssssssss',
-    'ksssssssssss',
-    'ksssssssssss',
-    'ksssssssssss',
-    'ksssssssssss',
-    'kSSSSSSSSSSk',
-    'kkkkkkkkkkkk',
-    'ksssssksssss',
-    'ksssssksssss',
-    'ksssssksssss',
-    'ksssssksssss',
-    'ksssssksssss',
-    'kSSSSSkSSSSS',
-    'kkkkkkkkkkkk',
-    '............',
-    '............',
-    '............',
-    '............',
-    '............',
-  ]),
-
-  villager: mirror([
-    '............',
-    '............',
-    '............',
-    '............',
-    '........kkkk',
-    '.......kNNNN',
-    '.......kNNNN',
-    '.......kpppp',
-    '.......kpkpp',
-    '.......kpppp',
-    '........kkkk',
-    '......kuuuuu',
-    '.....kpkuuuu',
-    '.....kpkuuuu',
-    '......kkuuuu',
-    '.......kUUUU',
-    '.......kUUUk',
-    '.......kUUUk',
-    '.......kNNNk',
-    '........kkk.',
-    '............',
-    '............',
-    '............',
-    '............',
-  ]),
 };
-
-SPRITES.tower = mirror([
-  '............',
-  '...........k',
-  '.........kkr',
-  '.......kkrRr',
-  '.....kkrRrrr',
-  '....krRrrrrr',
-  '...kkkkkkkkk',
-  '....knnnnnnn',
-  '....knnnnkkk',
-  '....knnnnkNN',
-  '....knnnnkNN',
-  '....knnnnkkk',
-  '....kNNNNNNN',
-  '...kkkkkkkkk',
-  '.....kSssSss',
-  '.....ksSssSs',
-  '.....kSssSss',
-  '.....ksSssSs',
-  '.....kSssSss',
-  '.....kSSSSSS',
-  '.....kkkkkkk',
-  '............',
-  '............',
-  '............',
-]);
 
 SPRITES.rubble = mirror([
   '............',
@@ -301,73 +219,8 @@ export function dirtRows(seed, edges = {}) {
   return toRows(g);
 }
 
-// Walls (10 levels) live in art-walls.js; the House (10 levels) in art-houses.js.
+// Walls (10 levels) live in art-walls.js; towers in art-buildings.js; the village in art-village.js.
 
-// The 3×3-tile House (72×72): gable roof with shingles, chimney, two windows, door, stone footing.
-export function bigHouseRows() {
-  const S = 72;
-  const g = Array.from({ length: S }, () => Array(S).fill('.'));
-  const rect = (x0, y0, x1, y1, ch) => {
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) g[y][x] = ch;
-  };
-  const frame = (x0, y0, x1, y1) => {
-    for (let x = x0; x <= x1; x++) { g[y0][x] = 'k'; g[y1][x] = 'k'; }
-    for (let y = y0; y <= y1; y++) { g[y][x0] = 'k'; g[y][x1] = 'k'; }
-  };
-
-  // Chimney (behind the roof).
-  rect(48, 8, 55, 26, 's');
-  rect(53, 8, 55, 26, 'S');
-  frame(47, 7, 56, 26);
-
-  // Roof: widens from the peak down to the eaves; shingle lines every 5 rows.
-  for (let y = 6; y <= 33; y++) {
-    const hw = Math.min(32, 2 + (y - 6) * 1.12);
-    const x0 = Math.round(35.5 - hw), x1 = Math.round(35.5 + hw);
-    for (let x = x0; x <= x1; x++) {
-      let ch = (y - 6) % 5 === 4 ? 'q' : 'r';
-      if (x < 36 && x - x0 < 3 && ch === 'r') ch = 'R'; // sunlit left edge
-      g[y][x] = ch;
-    }
-  }
-  rect(3, 34, 68, 35, 'k'); // eaves
-
-  // Walls.
-  rect(8, 36, 63, 62, 'w');
-  rect(8, 60, 63, 62, 'W');
-  frame(7, 36, 64, 63);
-
-  // Windows.
-  for (const x0 of [14, 48]) {
-    rect(x0, 41, x0 + 9, 50, 'y');
-    frame(x0 - 1, 40, x0 + 10, 51);
-    rect(x0 + 4, 41, x0 + 5, 50, 'k');
-    rect(x0, 45, x0 + 9, 45, 'k');
-  }
-
-  // Door.
-  rect(31, 45, 40, 62, 'n');
-  rect(39, 45, 40, 62, 'N');
-  frame(30, 44, 41, 63);
-  g[54][37] = 'y';
-
-  // Stone footing.
-  rect(5, 64, 66, 66, 'S');
-  for (let x = 8; x < 66; x += 6) g[65][x] = 'k';
-  frame(4, 63, 67, 67);
-
-  // Outline the roof.
-  const out = g.map((row) => row.slice());
-  for (let y = 0; y < S; y++) {
-    for (let x = 0; x < S; x++) {
-      if (g[y][x] !== '.') continue;
-      if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const v = g[y + dy]?.[x + dx]; return v && v !== '.'; })) out[y][x] = 'k';
-    }
-  }
-  return out.map((r) => r.join(''));
-}
-
-// Pond water tile. `edges` gives a sandy rim on the sides that border land.
 export function waterRows(seed, edges = {}) {
   const g = grid('c');
   for (let y = 0; y < SIZE; y++) {

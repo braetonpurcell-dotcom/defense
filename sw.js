@@ -1,4 +1,5 @@
-// Offline support: keep a copy of the game on the phone.
+// Offline support: keep a copy of the game on the phone. (Every module main.js imports must be listed here:
+// one missing file and the whole cache refuses to install.)
 // Serves the saved copy instantly and refreshes it in the background,
 // so a new version shows up on the next launch.
 
@@ -14,7 +15,6 @@ const FILES = [
   './js/battle.js',
   './js/paint.js',
   './js/art-walls.js',
-  './js/art-houses.js',
   './js/art-buildings.js',
   './js/art-decor.js',
   './js/art-cards.js',

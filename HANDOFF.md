@@ -4,6 +4,42 @@ Written 2026-10-06 at the end of a long build session, right before the conversa
 Read this top to bottom before touching anything. Where this file and the code disagree, **trust the code**
 and fix this file. Where this file and `DESIGN.md` / `QUESTIONS.md` / `README.md` disagree, this file is newer.
 
+## 0b. IN PROGRESS (2026-10-07): the Fable review pass - what's done and what's left
+A 109-agent review (8 reviewers + adversarial verifiers; 98 findings confirmed, 3 refuted) drove a fix pass.
+Full findings: the verifiers' output is summarised in the commit history; the proposals for the village
+layout and pace are in the workflow journal under the session's `subagents/workflows/wf_d55e29a6-c09`.
+
+DONE (committed, tested in the sandbox):
+- Archer role and tower manning removed: towers shoot on their own. New lives start with no NPCs.
+- The two lone starter trees are gone; starting towers sit 2 tiles off the path; the hero starts beside the path.
+- Speed is a saved preference (`defense.prefs`), never reset; quiet stretches of a wave auto fast-forward at 3x
+  (`waveIsQuiet`, the left button shows FAST FWD). The whole simulation runs inside the speed loop (hero and
+  fighters used to act at 1x while zombies ran at 3x).
+- Save fixes: no save during a wave except the one at START WAVE (`saveGame(true)`, `runSnapshot(inWave)`);
+  closing the app mid-wave replays that wave; no save after death; card picks/skips/rerolls save; hp clamps to
+  maxHp (Stonemason); RESTART clears all UI state and only records runs that were played.
+- Goals pay in any order (`game.goalsDone`, `nextGoal()`); Town Hall lists them.
+- No more timers or game clock: every upgrade is instant (economy.js `upgrade`); no pet feeding; the General
+  Store sells run blessings (arrows / hawkeye / stonemason) for gold.
+- Pace/balance: zombie speeds +25%, King 400 hp / 100 gold, `hpScale` gentle curve, gold scales by wave,
+  flatter tower upgrade prices with a steeper damage curve, tower costs 200, omens rebalanced, traits fixed.
+- Dead code gone: art-houses.js, bigHouseRows, farm/quarry/lab/dock art, unused sprites, walking-hero leftovers,
+  reach rule, QUESTIONS.md; README/manifest/bots/art-gallery updated; `.gitattributes` pins LF.
+- The dirt path is only drawn through the forest and at the bridge approach (across your land it's grass).
+
+NOT DONE YET (next session):
+1. Village redesign per the review's layout proposal (two lanes of fenced cottages, a 15x5 market square with the
+   well in the middle, churchyard, civic square around the Town Hall, wheat field + orchard, duck pond, dock)
+   plus the ~17 new props to draw in art-village.js. The full data is in the workflow journal (dimension
+   'village-design').
+2. UI text/layout: HOME button -> BASE; 'STORE' gems tab -> PACKS; game-over HOME -> MENU; wild-terrain and
+   'WHEN YOU ARE HOME' toasts; '(HIRED)' row says 'after your next run'; gems toast 'WIN RUNS'; ITEMS tab 11px
+   tall (make 16-18); goal banner/toast over the gear; cave '!' under the banner; tapping the hero while
+   placing an item; settings gear blocked during the card pick; Chapel 'THE BELL' row; barricade panel lines.
+3. Perf: per-tick tile index for buildingAt (findPath and wall masks are O(buildings) per tile), precomputed
+   walkability array for battle, glyph atlas in gfx.js drawText.
+4. Re-run the bots (tools/bots.html) as a smoke test, then publish (`tools/publish.ps1 -Preview main`).
+5. DESIGN.md note for the archer removal and the pace numbers above.
 ## 0a. READ FIRST: v2 = defend the village (no House)
 See DESIGN.md's "v2 DESIGN" section. The House is gone, along with every House gate and cap.
 - The zombies' goal is the village entrance just past the bridge (`villageGateRow`, `isVillageGate`). One zombie there ends the run (`battle.villageLost`, `breakthrough`).

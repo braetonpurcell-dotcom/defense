@@ -6,7 +6,7 @@
   <style>
     body { background: #38b764; color: #1a1c2c; font: 13px/1.3 system-ui; margin: 0; padding: 12px; }
     h1 { font-size: 16px; margin: 0 0 8px; }
-    .grid { display: grid; grid-template-columns: repeat(2, max-content); gap: 10px 28px; }
+    .grid { display: grid; grid-template-columns: max-content; gap: 10px; }
     .row { display: flex; align-items: flex-end; gap: 10px; }
     .label { width: 70px; font-weight: 700; }
     .label small { display: block; font-weight: 400; }
@@ -14,13 +14,13 @@
   </style>
 </head>
 <body>
-  <h1>House and wall levels 1–10</h1>
+  <h1>Tower and wall levels 1–10</h1>
   <div id="grid" class="grid"></div>
   <script type="module">
-    import { PAL, shadowRows } from '../js/art.js';
+    import { shadowRows } from '../js/art.js';
     import { rowsToCanvas } from '../js/gfx.js';
     import { wallRows, WALL_LEVELS, WALL_N, WALL_E, WALL_S, WALL_W } from '../js/art-walls.js';
-    import { houseRows, HOUSE_LEVELS } from '../js/art-houses.js';
+    import { towerRows, towerPalette, TOWER_H } from '../js/art-buildings.js';
 
     const SCALE = 2;
     const shadow = rowsToCanvas(shadowRows());
@@ -41,19 +41,20 @@
       [WALL_N | WALL_S, 0, WALL_N | WALL_S],
       [WALL_N | WALL_E, WALL_E | WALL_W, WALL_N | WALL_W],
     ];
+    const tower = towerRows();
 
     for (let level = 1; level <= 10; level++) {
       const row = document.createElement('div');
       row.className = 'row';
       const label = document.createElement('div');
       label.className = 'label';
-      label.innerHTML = `Level ${level}<small>${HOUSE_LEVELS[level - 1].name}</small><small>${WALL_LEVELS[level - 1].name}</small>`;
+      label.innerHTML = `Level ${level}<small>${WALL_LEVELS[level - 1].name}</small>`;
       row.append(label);
 
-      const [hc, hctx] = scaled(72, 72);
-      hctx.drawImage(shadow, 0, 0, 72, 72);
-      hctx.drawImage(rowsToCanvas(houseRows(level)), 0, 0);
-      row.append(hc);
+      const [tc, tctx] = scaled(24, TOWER_H);
+      tctx.drawImage(shadow, 0, TOWER_H - 24);
+      tctx.drawImage(rowsToCanvas(tower, towerPalette(level)), 0, 0);
+      row.append(tc);
 
       const [wc, wctx] = scaled(72, 72);
       RING.forEach((r, y) => r.forEach((mask, x) => {

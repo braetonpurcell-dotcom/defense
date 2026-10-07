@@ -5,68 +5,6 @@ import { painter, blocks } from './paint.js';
 
 const S = 48;
 
-function quarry(p) {
-  // Rocky pit with a mine cart of gold and a pickaxe.
-  p.disc(24, 28, 19, 'S');
-  p.disc(24, 28, 15, 't');
-  p.disc(24, 30, 11, 'k');
-  p.disc(23, 29, 9, 'm');
-  for (const [x, y, r] of [[9, 20, 5], [37, 18, 6], [12, 38, 5], [38, 37, 5], [24, 11, 5]]) {
-    p.disc(x, y, r, 's'); p.disc(x - 1, y - 1, r - 2, 'W'); p.put(x + 1, y + 1, 'S');
-  }
-  // Mine cart.
-  p.rect(16, 25, 31, 33, 'N'); p.hline(16, 31, 25, 'n'); p.frame(15, 24, 32, 34);
-  for (const [x, y] of [[18, 22], [21, 21], [24, 22], [27, 21], [29, 23], [22, 23]]) { p.rect(x, y, x + 2, y + 2, 'y'); p.put(x, y, 'Y'); }
-  p.rect(17, 35, 19, 37, 'k'); p.rect(28, 35, 30, 37, 'k');
-  // Pickaxe.
-  p.vline(40, 6, 18, 'n'); p.hline(35, 45, 6, 'S'); p.put(35, 7, 'S'); p.put(45, 7, 'S');
-}
-
-function farm(p) {
-  // Fenced plot with crop rows.
-  p.rect(3, 6, 44, 43, 'D');
-  for (let y = 9; y <= 40; y += 6) {
-    for (let x = 6; x <= 41; x += 3) {
-      p.vline(x, y, y + 3, 'G'); p.put(x, y, 'y'); p.put(x + 1, y + 1, 'l');
-      p.put(x, y - 1, 'Y');
-    }
-    p.hline(5, 42, y + 4, 'd');
-  }
-  // Fence.
-  for (const y of [4, 44]) { p.hline(1, 46, y, 'h'); p.hline(1, 46, y + 1, 'N'); }
-  for (let x = 1; x <= 46; x += 5) p.vline(x, 2, 46, 'n');
-  p.vline(1, 2, 46, 'n'); p.vline(46, 2, 46, 'n');
-  // Scarecrow.
-  p.vline(36, 10, 24, 'N'); p.hline(31, 41, 14, 'N'); p.rect(34, 6, 38, 10, 'y'); p.rect(33, 5, 39, 6, 'n'); p.rect(34, 15, 38, 20, 'r');
-}
-
-function lab(p) {
-  // Small stone lab with a glass dome and a bubbling flask sign.
-  blocks(p, 6, 22, 41, 44, 's', 'S', 6, 4);
-  p.frame(5, 21, 42, 45);
-  p.disc(24, 21, 13, 'v');
-  p.disc(24, 21, 10.5, 'c');
-  p.disc(20, 17, 3, 'w');
-  p.hline(9, 39, 21, 'k'); p.rect(9, 22, 39, 23, 'S');
-  for (let y = 0; y <= 22; y++) for (let x = 0; x < S; x++) if (y > 21 && p.get(x, y) === 'c') p.put(x, y, 's');
-  // Door and window.
-  p.rect(20, 33, 27, 44, 'E'); p.frame(19, 32, 28, 45); p.put(26, 39, 'y');
-  p.rect(9, 28, 15, 33, 'l'); p.frame(8, 27, 16, 34);
-  // Flask sign.
-  p.rect(32, 27, 39, 36, 'k'); p.rect(34, 28, 37, 30, 'w'); p.rect(33, 31, 38, 35, 'l'); p.put(35, 32, 'w');
-  // Antenna with a spark.
-  p.vline(35, 2, 10, 'S'); p.put(35, 1, 'v'); p.put(34, 2, 'v'); p.put(36, 2, 'v');
-}
-
-function dock(p) {
-  // 1×1: a wooden pier. The fisher is drawn separately at full person size, standing on it.
-  p.rect(1, 6, 22, 21, 'h');
-  for (let y = 6; y <= 21; y += 4) p.hline(1, 22, y, 'n');
-  p.vline(1, 6, 21, 'N'); p.vline(22, 6, 21, 'N');
-  for (const [x, y] of [[2, 22], [20, 22], [2, 3], [20, 3]]) p.rect(x, y, x + 1, y + 2, 'N');
-  p.rect(16, 15, 20, 19, 'n'); p.frame(15, 14, 21, 20); p.put(18, 16, 'c'); // bucket of fish
-}
-
 // The Archer Tower: takes 1 tile but stands 40px tall (it overhangs the tile behind it),
 // so it reads as a tower next to the 3×3 House. Stone base, wooden lookout, roof, archer.
 export const TOWER_H = 40;
@@ -94,25 +32,6 @@ export function towerRows() {
   p.vline(11, 0, 2, 'N'); p.rect(12, 0, 15, 1, 'y');
   p.outline();
   return p.rows();
-}
-
-const DRAW = { quarry, farm, lab, dock };
-const SIZES = { dock: 24 };
-
-export function buildingRows(type) {
-  const size = SIZES[type] || S;
-  const p = painter(size, size);
-  DRAW[type](p);
-  p.outline();
-  return p.rows();
-}
-
-// Farm crops by state: growing (green sprouts), ready (golden, the base art), wilted (brown).
-export const FARM_STATES = ['growing', 'ready', 'wilted'];
-export function farmPalette(state) {
-  if (state === 'growing') return { ...PAL, y: '#a7f070', Y: '#38b764', r: '#a7f070' };
-  if (state === 'wilted') return { ...PAL, y: '#8d6a3a', Y: '#5a3a1f', G: '#5a3a1f', l: '#8d6a3a', r: '#8d6a3a' };
-  return PAL;
 }
 
 // Towers keep their shape but get sturdier materials as they level:

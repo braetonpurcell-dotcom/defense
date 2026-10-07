@@ -48,7 +48,7 @@ const yieldFrame = () => new Promise((r) => setTimeout(r, 0));
 
 // Hire whoever on the Tavern board is affordable (fighters and builders first).
 function hire(d) {
-  const order = ['builder', 'guard', 'gunner', 'archer', 'farmer'];
+  const order = ['builder', 'guard', 'gunner'];
   const board = (d.game.applicants || []).map((a, i) => ({ a, i })).filter((x) => x.a)
     .sort((x, y) => order.indexOf(x.a.role) - order.indexOf(y.a.role));
   for (const { i } of board) d.hireApplicant(i);
@@ -57,7 +57,7 @@ function hire(d) {
 // Spend on upgrades: towers first, then walls (the lowest level first).
 function upgradeBase(d) {
   const g = d.game;
-  for (const t of g.buildings.filter((b) => b.type === 'tower')) if (!g.builder) d.upgrade(t);
+  for (const t of g.buildings.filter((b) => b.type === 'tower')) d.upgrade(t);
   const wall = [...g.buildings].filter((b) => b.type === 'wall').sort((a, b) => a.level - b.level)[0];
   if (wall) d.upgradeAllWalls(wall.level);
 }
@@ -69,11 +69,11 @@ function handleCards(d, bot) {
     if (choice === 'reroll') { d.rerollCards(); continue; }
     if (choice < 0) d.skipCard(); else d.pickCard(choice);
   }
-  for (let guard = 0; guard < 10 && d.run.pending; guard++) d.autoPlace();
+  for (let guard = 0; guard < 10 && d.autoPlace(); guard++); // put every picked card somewhere sensible
 }
 
 // Play `lives` lives (endless waves, so each ends in death) with one bot (roguelike: each life starts from nothing).
-// Every 15 seconds of daylight the bot collects, looks after its base and handles the dawn card.
+// Between waves the bot picks its card, looks after its base, and starts the next wave after 20 seconds.
 // Returns one row per life.
 export async function playSeasons(d, bot, lives, onSeason) {
   const rows = [];
@@ -82,7 +82,7 @@ export async function playSeasons(d, bot, lives, onSeason) {
     let secs = 0, homeSecs = 0;
     while (d.phase !== 'end' && secs < 4000) {
       if (d.phase === 'home') {
-        // Between waves: pick the card, look after the base, then start the next wave after 20 seconds.
+        // Between waves: pick the card, look after the base, then start the next wave.
         handleCards(d, bot);
         homeSecs++;
         if (homeSecs === 5) { bot.atHome(d, life); if (bot.hires) hire(d); }

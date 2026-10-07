@@ -1,7 +1,7 @@
 {
   "name": "Defense",
   "short_name": "Defense",
-  "description": "Build your base and hold off 10 waves of monsters.",
+  "description": "Defend the village from endless zombie waves. One gets through and the run is over.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
