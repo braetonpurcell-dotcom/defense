@@ -63,6 +63,15 @@ playing, or a strategy bot that designs a base.
 **Rough numbers (do-nothing base, smoke test only):** wave 1 pays about 56G, wave 5 about 276G. An idle base
 hits the 1000G House cap by about wave 5 and dies around wave 5–7.
 
+**Items, ranges, zoom (2026-10-06, latest):**
+- AUTO is gone. Picked cards go into `game.items` (`{ type, level, n }`), not straight onto the map.
+- The ITEMS tab above the bottom bar pulls up a slidable bar (`drawItems`, `itemsLayout`). Tap an item, then your land, to place it.
+- STORE (in a building's panel, between waves, full health) puts any building except the House and trees back into items.
+- `countOf` includes items, so storing never beats the House limits. `autoPlace` remains for bots/tests only.
+- A selected tower, card tower or the hero (while giving orders) shows a dashed range ring (`drawRange`).
+- Zoom-out lag fix: the overview map is used whenever more plots are visible than half the plot cache, at most 4 new plot images are built per frame, and off-screen buildings are skipped.
+- Fixed a render crash when zombies attacked the hero (`drawMonster`).
+
 **On GitHub (2026-10-06):** public repo https://github.com/braetonpurcell-dotcom/defense; phone link
 https://braetonpurcell-dotcom.github.io/defense/ (GitHub Pages from the gh-pages branch, built by `tools/publish.ps1`).
 To republish: commit, merge to main, push, then run publish.ps1. Git here has no stored GitHub login, so pass gh's

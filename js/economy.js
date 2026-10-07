@@ -11,7 +11,9 @@ const SHORT = { gold: 'G' };
 
 export const houseOf = (game) => game.buildings.find((b) => b.type === 'house');
 export const houseLevel = (game) => houseOf(game).level || 1;
-export const countOf = (game, type) => game.buildings.filter((b) => b.type === type).length;
+// How many you own: on the map plus any put away in your items (so storing things never gets you extra).
+export const countOf = (game, type) => game.buildings.filter((b) => b.type === type).length
+  + (game.items || []).filter((i) => i.type === type).reduce((sum, i) => sum + i.n, 0);
 
 export const canAfford = (game, cost) => RES.every((r) => (game[r] || 0) >= (cost[r] || 0));
 export const missing = (game, cost) => RES.find((r) => (game[r] || 0) < (cost[r] || 0));

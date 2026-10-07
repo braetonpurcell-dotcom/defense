@@ -172,6 +172,7 @@ function upgradeSave(s) {
   s.stats ??= { bestWave: 0, wins: 0 };
   s.goal ??= 0;
   s.hero ??= { level: 1, post: null }; // your hero (a mobile tower)
+  s.items ??= []; // your inventory: cards and buildings not on the map ({ type, level, n })
   // Roguelike: the current run (saved, so you can close the app between waves).
   delete s.dayLeft;
   s.runState ??= null;
@@ -467,8 +468,9 @@ function plotImg(px, py) {
   return cv;
 }
 
-// Overview: 4 px per tile, used when zoomed far out.
-const OVERVIEW_PX = 4;
+// Overview: 6 px per tile, used when zoomed out (whenever more plots are on screen than the cache can hold,
+// drawing them would mean rebuilding plots every frame - that was the zoom-out lag).
+const OVERVIEW_PX = 6;
 const overview = document.createElement('canvas');
 overview.width = N * OVERVIEW_PX;
 overview.height = NR * OVERVIEW_PX;
@@ -499,13 +501,21 @@ function buildTerrain() {
 
 // Draw the visible part of the ground. Called with the world transform already set (scale s, offset ox/oy).
 function drawTerrain(s, ox, oy) {
-  if (s < 0.4) { ctx.drawImage(overview, 0, 0, WORLD, WORLD_H); return; }
   const px0 = Math.max(0, Math.floor(-ox / s / PLOT_PX)), py0 = Math.max(0, Math.floor(-oy / s / PLOT_PX));
   const px1 = Math.min(N / CHUNK - 1, Math.floor((canvas.width - ox) / s / PLOT_PX));
   const py1 = Math.min(NR / CHUNK - 1, Math.floor((canvas.height - oy) / s / PLOT_PX));
+  const visible = (px1 - px0 + 1) * (py1 - py0 + 1);
+  if (s < 0.4 || visible > PLOT_CACHE_MAX / 2) { ctx.drawImage(overview, 0, 0, WORLD, WORLD_H); return; }
   const seam = 1 / s; // overlap one screen pixel so plot edges never show a gap
+  // Building a plot image is slow, so at most a few new ones per frame (no hitch when you zoom out);
+  // the rest show the overview's version of that plot until their turn comes.
+  let budget = 4;
+  const op = CHUNK * OVERVIEW_PX;
   for (let py = py0; py <= py1; py++) {
-    for (let px = px0; px <= px1; px++) ctx.drawImage(plotImg(px, py), px * PLOT_PX, py * PLOT_PX, PLOT_PX + seam, PLOT_PX + seam);
+    for (let px = px0; px <= px1; px++) {
+      if (plotCache.has(py * 100 + px) || budget-- > 0) ctx.drawImage(plotImg(px, py), px * PLOT_PX, py * PLOT_PX, PLOT_PX + seam, PLOT_PX + seam);
+      else ctx.drawImage(overview, px * op, py * op, op, op, px * PLOT_PX, py * PLOT_PX, PLOT_PX + seam, PLOT_PX + seam);
+    }
   }
 }
 buildTerrain();
@@ -1130,6 +1140,9 @@ function layoutUI() {
   buttons.panel = { x: 4, y: py0, w: UW - 8, h: PANEL_H };
   buttons.upgrade = { x: UW - 66, y: py0 + 4, w: 58, h: 18, label: 'UPGRADE', primary: true };
   buttons.upgradeAll = { x: UW - 66, y: py0 + 24, w: 58, h: 18, label: 'ALL WALLS' };
+  // STORE: top right for things with no UPGRADE button (cards, decorations), else beside ALL WALLS.
+  buttons.store = { x: UW - 128, y: py0 + 24, w: 58, h: 18, label: 'STORE' };
+  buttons.storeTop = { x: UW - 66, y: py0 + 4, w: 58, h: 18, label: 'STORE' };
 
   // Build menu: two tabs (BUILD and LOOKS), up to 7 rows each.
   const mw = Math.min(200, UW - 16), rowH = 19, top = 24, mh = top + 7 * rowH + 26;
@@ -1274,10 +1287,11 @@ function pickCard(i) {
     return;
   }
   const type = card.kind === 'walls' ? 'barricade' : id;
-  const left = card.kind === 'walls' ? card.count : card.kind === 'trap' && run.omen.trapPairs ? 2 : 1;
-  run.pending = { type, left };
-  placing = type;
+  const n = card.kind === 'walls' ? card.count : card.kind === 'trap' && run.omen.trapPairs ? 2 : 1;
+  addItem(type, 1, n);
+  itemsOpen = true;
   selected = null;
+  showToast(`${card.name.toUpperCase()} ADDED TO YOUR ITEMS`);
 }
 
 function skipCard() {
@@ -1293,26 +1307,59 @@ function rerollCards() {
   offerCards();
 }
 
-// Put a picked card down (no cost; it's gone when the run ends).
-function placeRunCard(c, r) {
-  const type = run.pending.type;
-  const size = BUILDINGS[type].size || 1;
+// ---------- Items (your inventory) ----------
+// Picked cards and buildings you've put away wait here until you place them. Pull the ITEMS bar up from
+// above the bottom bar, slide through it, tap an item, then tap your land. Select a building and tap STORE
+// to put it away (between waves, at full health). Stored things still count toward your House limits.
+let itemsOpen = false;
+let itemsScroll = 0;      // how far the bar is slid (UI pixels)
+let placingItem = null;   // the item being placed, or null
+const ITEM_SLOT = 28, ITEM_GAP = 4;
+
+function addItem(type, level = 1, n = 1) {
+  const it = game.items.find((i) => i.type === type && i.level === level);
+  if (it) it.n += n; else game.items.push({ type, level, n });
+}
+
+function placeItem(it, c, r) {
+  const size = BUILDINGS[it.type].size || 1;
   const half = Math.floor(size / 2);
   if (!fits(null, c - half, r - half, size)) { showToast('NOT ENOUGH ROOM THERE'); return false; }
-  const b = { id: game.nextId++, type, c: c - half, r: r - half, level: 1, hp: hpFor(type, 1), run: true };
-  if (type === 'barricade' && run.blessings.stonemason) b.hp = maxHp(b);
+  const b = { id: game.nextId++, type: it.type, c: c - half, r: r - half, level: it.level, hp: 1 };
+  if (BUILDINGS[it.type].run) b.run = true;
+  b.hp = maxHp(b);
   game.buildings.push(b);
   const p = centerOf(b);
   addPuff(p.x, p.y);
-  if (--run.pending.left <= 0) { run.pending = null; placing = null; }
+  if (--it.n <= 0) { game.items.splice(game.items.indexOf(it), 1); placingItem = null; }
+  saveGame();
   return true;
 }
 
-// Bots and lazy players: find a sensible spot for the pending card.
+function storeBuilding(b) {
+  if (phase !== 'home') { showToast('PUT THINGS AWAY BETWEEN WAVES'); return false; }
+  if (b.type === 'house' || b.type === 'tree') { showToast("THAT CAN'T BE PUT AWAY"); return false; }
+  if (underConstruction(game, b)) { showToast('WAIT FOR THE UPGRADE TO FINISH'); return false; }
+  if (b.hp < maxHp(b)) { showToast('FIX IT FIRST'); return false; }
+  game.buildings.splice(game.buildings.indexOf(b), 1);
+  addItem(b.type, b.level || 1);
+  // An archer posted at a stored tower goes looking for another one.
+  for (const n of game.npcs) if (n.post === b.id) n.post = null;
+  for (const v of villagers) if (v.npc.post === null && v.atPost) v.atPost = false;
+  const p = centerOf(b);
+  addPuff(p.x, p.y);
+  selected = null;
+  itemsOpen = true;
+  showToast(`${BUILDINGS[b.type].name.toUpperCase()} PUT IN YOUR ITEMS`);
+  saveGame();
+  return true;
+}
+// Bots and tests: put the first run card in your items somewhere sensible. (Players place their own.)
 // Traps go on the monsters' route; everything else near the gate and the House.
 function autoPlace() {
-  if (!run.pending) return false;
-  const type = run.pending.type;
+  const it = game.items.find((i) => BUILDINGS[i.type].run);
+  if (!it) return false;
+  const type = it.type;
   const size = BUILDINGS[type].size || 1;
   battle.recomputeFlow();
   const h = house();
@@ -1352,10 +1399,8 @@ function autoPlace() {
     if (!Number.isFinite(cand.score)) break;
     if (BUILDINGS[type].trap) { if (!path.has(`${cand.c},${cand.r}`)) continue; }
     else if (nearPath(cand.c, cand.r)) continue;
-    if (placeRunCard(cand.c + half, cand.r + half)) return true;
+    if (placeItem(it, cand.c + half, cand.r + half)) return true;
   }
-  run.pending = null;
-  placing = null;
   return false;
 }
 
@@ -1398,7 +1443,7 @@ function warnIfFull(lost) {
 function runSnapshot() {
   return {
     wave: run.wave, earned: run.earned, kills: run.kills, blessings: run.blessings, rerolls: run.rerolls,
-    choices: run.choices, pending: run.pending, omen: OMENS.indexOf(run.omen),
+    choices: run.choices, omen: OMENS.indexOf(run.omen),
   };
 }
 function restoreRun() {
@@ -1406,7 +1451,8 @@ function restoreRun() {
   if (!r) return startRun();
   Object.assign(run, { kills: 0, ...r, omen: OMENS[r.omen] || OMENS[OMENS.length - 1] });
   phase = 'home';
-  if (run.pending) placing = run.pending.type;
+  // Older saves: a card waiting to be placed goes into your items.
+  if (r.pending) { addItem(r.pending.type, 1, r.pending.left); delete run.pending; }
 }
 
 // A fresh run: wave 0, a new omen, no blessings.
@@ -1421,7 +1467,6 @@ function startRun() {
   run.dead = false;
   run.blessings = {};
   run.rerolls = 1 + (petPerk('owl') ? 1 : 0);
-  run.pending = null;
   run.omen = OMENS[Math.floor(Math.random() * OMENS.length)];
   battle.reset();
   const h = house();
@@ -1435,7 +1480,6 @@ const isKingWave = (wave) => wave % BOSS_EVERY === 0;
 // START WAVE.
 function nextWave() {
   if (run.choices) { showToast('PICK A CARD FIRST'); return; }
-  if (run.pending) { showToast('PLACE YOUR CARD FIRST'); return; }
   run.wave++;
   phase = 'wave';
   buildMode = false;
@@ -1443,6 +1487,8 @@ function nextWave() {
   shopOpen = null;
   selected = null;
   placing = null;
+  placingItem = null;
+  itemsOpen = false;
   villagersRunHome();
   battle.startWave(run.wave);
   const kings = run.wave / BOSS_EVERY;
@@ -1474,8 +1520,9 @@ function waveCleared() {
 function endRun() {
   battle.active = false;
   run.choices = null;
-  run.pending = null;
   placing = null;
+  placingItem = null;
+  itemsOpen = false;
   phase = 'end';
   run.dead = true;
   const waves = Math.max(0, run.wave - 1);
@@ -1830,10 +1877,14 @@ function onWorldTap(sx, sy) {
   }
   const [cx, cy] = chunkOfTile(c, r);
 
+  if (placingItem) {
+    if (!ownsChunk(cx, cy)) { showToast('PLACE IT ON YOUR LAND'); return; }
+    placeItem(placingItem, c, r);
+    return;
+  }
   if (placing) {
     if (!ownsChunk(cx, cy)) { showToast('PLACE IT ON YOUR LAND'); return; }
-    if (run.pending) placeRunCard(c, r);
-    else placeNew(placing, c, r);
+    placeNew(placing, c, r);
     return;
   }
 
@@ -1850,7 +1901,7 @@ function onWorldTap(sx, sy) {
 
   // Build mode: pick any building up and put it down somewhere else. No walking needed.
   if (buildMode) {
-    if (!selected) { if (hit) selected = hit; return; }
+    if (!selected) { if (hit) { selected = hit; itemsOpen = false; } return; }
     if (hit === selected) { selected = null; return; }
     if (hit) { selected = hit; return; }
     // Big buildings are centred on the tapped tile.
@@ -1870,17 +1921,23 @@ function onWorldTap(sx, sy) {
   if (!hit) { selected = null; return; }
   if (hit === selected) { selected = null; return; }
   selected = hit;
+  itemsOpen = false;
+  placingItem = null;
 }
 
 const inRect = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h;
 const toUI = (sx, sy) => ({ x: (sx * dpr) / ui, y: (sy * dpr) / ui });
-const showPanel = () => selected && phase !== 'wave' && phase !== 'end' && !placing;
-const showRepair = () => phase === 'home' && !buildMode && !showPanel() && repairCost() > 0;
+const showPanel = () => selected && phase !== 'wave' && phase !== 'end' && !placing && !itemsOpen;
+const showRepair = () => phase === 'home' && !buildMode && !itemsOpen && !showPanel() && repairCost() > 0;
+// Anything but the House and trees can be put away in your items (between waves).
+const canStore = (b) => phase === 'home' && b && b.type !== 'house' && b.type !== 'tree';
+const storeButton = (b) => (BUILDINGS[b.type].run || BUILDINGS[b.type].decor ? buttons.storeTop : buttons.store);
 
 // Is this screen point on top of a UI element (so it shouldn't pan the map)?
 function onUI(sx, sy) {
   const p = toUI(sx, sy);
   if (offer || menuOpen || shopOpen || lookOpen || runsOpen || phase === 'end' || phase === 'title' || run.choices) return true;
+  if (phase === 'home' && !showPanel()) { const { bar, tab } = itemsLayout(); if (inRect(p, tab) || (itemsOpen && inRect(p, bar))) return true; }
   return p.y < HUD_H || p.y >= UH - BAR_H || inRect(p, buttons.zoomIn) || inRect(p, buttons.zoomOut)
     || (showRepair() && inRect(p, buttons.repair)) || (showPanel() && inRect(p, buttons.panel));
 }
@@ -1995,7 +2052,22 @@ function onTap(sx, sy) {
   }
   if (inRect(p, buttons.zoomIn)) return zoomAt(viewW / 2, viewH / 2, cam.z * 1.5);
   if (inRect(p, buttons.zoomOut)) return zoomAt(viewW / 2, viewH / 2, cam.z / 1.5);
+  // The ITEMS tab and bar.
+  if (phase === 'home' && !showPanel()) {
+    const { bar, tab } = itemsLayout();
+    if (inRect(p, tab)) { itemsOpen = !itemsOpen; if (!itemsOpen) placingItem = null; selected = null; return; }
+    if (itemsOpen && inRect(p, bar)) {
+      const at = p.x - 6 + itemsScroll, i = Math.floor(at / (ITEM_SLOT + ITEM_GAP));
+      const it = game.items[i];
+      if (it && at - i * (ITEM_SLOT + ITEM_GAP) < ITEM_SLOT) {
+        placingItem = placingItem === it ? null : it;
+        placing = null; buildMode = false; selected = null;
+      }
+      return;
+    }
+  }
   if (showPanel() && inRect(p, buttons.panel)) {
+    if (canStore(selected) && inRect(p, storeButton(selected))) return storeBuilding(selected);
     // Only the buttons the panel actually draws respond (none in build mode).
     if (buildMode) return;
     const def = BUILDINGS[selected.type];
@@ -2018,7 +2090,7 @@ function onTap(sx, sy) {
     return;
   }
   if (inRect(p, buttons.left)) {
-    if (run.pending) { autoPlace(); return; }  // the left button says AUTO while a card waits to be placed
+    if (placingItem) { placingItem = null; return; } // DONE placing an item
     if (phase !== 'home') {
       speed = speed % 3 + 1;
       return;
@@ -2049,7 +2121,9 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 1) {
-    drag = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y, moved: false, ui: onUI(e.clientX, e.clientY) };
+    const pu = toUI(e.clientX, e.clientY);
+    const onBar = phase === 'home' && itemsOpen && inRect(pu, itemsLayout().bar);
+    drag = { sx: e.clientX, sy: e.clientY, camX: cam.x, camY: cam.y, moved: false, ui: onUI(e.clientX, e.clientY), bar: onBar, scroll0: itemsScroll };
   } else if (pointers.size === 2) {
     const m = midpoint();
     pinch = { d0: Math.max(1, m.d), z0: cam.z, mid: m };
@@ -2073,6 +2147,11 @@ canvas.addEventListener('pointermove', (e) => {
     // but only presses that started on the map pan the camera.
     const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
     if (!drag.moved && Math.hypot(dx, dy) > 8) { drag.moved = true; if (!drag.ui) follow = false; }
+    if (drag.moved && drag.bar) {
+      // Sliding the ITEMS bar.
+      const max = Math.max(0, game.items.length * (ITEM_SLOT + ITEM_GAP) + 8 - UW);
+      itemsScroll = Math.max(0, Math.min(max, drag.scroll0 - (dx * dpr) / ui));
+    }
     if (drag.moved && !drag.ui) {
       cam.x = drag.camX - dx / cam.z;
       cam.y = drag.camY - dy / cam.z;
@@ -2219,7 +2298,7 @@ function drawMonster(m) {
   let x = m.x + m.ox, y = m.y + m.oy;
   // Lunge toward what it's hitting, right after a hit.
   if (m.attacking && m.atk > m.def.rate - 0.15) {
-    const tc = m.attacking.npc ? { x: m.attacking.x + T / 2, y: m.attacking.y + T / 2 } : centerOf(m.attacking);
+    const tc = m.attacking.npc || m.attacking.isHero ? { x: m.attacking.x + T / 2, y: m.attacking.y + T / 2 } : centerOf(m.attacking);
     if (Math.abs(tc.x - m.x) > T / 2) x += Math.sign(tc.x - m.x) * 3;
     if (Math.abs(tc.y - m.y) > T / 2) y += Math.sign(tc.y - m.y) * 3;
   }
@@ -2360,6 +2439,70 @@ function drawCardPick() {
   drawButton(buttons.skip, `SKIP +${SKIP_GOLD}G`, 'normal');
 }
 
+// The ITEMS tab sits just above the bottom bar; pulled up, the bar of item slots sits between them.
+function itemsLayout() {
+  const barH = itemsOpen ? ITEM_SLOT + 8 : 0;
+  const bar = { x: 0, y: UH - BAR_H - barH, w: UW, h: barH };
+  const tab = { x: Math.round(UW / 2) - 32, y: bar.y - 11, w: 64, h: 11 };
+  return { bar, tab };
+}
+
+// A small picture of an item: its building art (or card art), shrunk to fit a slot.
+function itemIcon(it) {
+  if (it.type === 'wall' || it.type === 'barricade') return levelImg('wall', it.type === 'wall' ? it.level : 2, WALL_E | WALL_W, false);
+  return levelImg(it.type, it.level, 0, false);
+}
+
+function drawItems() {
+  const { bar, tab } = itemsLayout();
+  const count = game.items.reduce((sum, i) => sum + i.n, 0);
+  panelBox(tab, itemsOpen ? PAL.S : PAL.t);
+  const label = `ITEMS ${count}`;
+  drawText(ctx, label, tab.x + Math.round((tab.w - textWidth(label)) / 2) + 3, tab.y + 3, count ? PAL.y : PAL.s);
+  // A little arrow: up to open, down to close.
+  ctx.fillStyle = PAL.w;
+  const ax = tab.x + 5, ay = tab.y + 4;
+  if (itemsOpen) { ctx.fillRect(ax, ay, 5, 1); ctx.fillRect(ax + 1, ay + 1, 3, 1); ctx.fillRect(ax + 2, ay + 2, 1, 1); }
+  else { ctx.fillRect(ax + 2, ay, 1, 1); ctx.fillRect(ax + 1, ay + 1, 3, 1); ctx.fillRect(ax, ay + 2, 5, 1); }
+  if (!itemsOpen) return;
+  ctx.fillStyle = PAL.k;
+  ctx.fillRect(bar.x, bar.y, bar.w, bar.h);
+  if (!game.items.length) {
+    centeredText('EMPTY - PICKED CARDS AND STORED BUILDINGS GO HERE', bar.y + 14, PAL.s);
+    return;
+  }
+  game.items.forEach((it, i) => {
+    const x = 6 + i * (ITEM_SLOT + ITEM_GAP) - itemsScroll, y = bar.y + 4;
+    if (x + ITEM_SLOT < 0 || x > UW) return;
+    const on = it === placingItem;
+    ctx.fillStyle = on ? PAL.y : PAL.S; ctx.fillRect(x, y, ITEM_SLOT, ITEM_SLOT);
+    ctx.fillStyle = '#272b3a'; ctx.fillRect(x + 1, y + 1, ITEM_SLOT - 2, ITEM_SLOT - 2);
+    const img = itemIcon(it);
+    const k = Math.min(22 / img.width, 22 / img.height);
+    const w = Math.round(img.width * k), h = Math.round(img.height * k);
+    ctx.drawImage(img, x + Math.round((ITEM_SLOT - w) / 2), y + Math.round((ITEM_SLOT - h) / 2), w, h);
+    if (it.n > 1) { const t = `${it.n}`; drawText(ctx, t, x + ITEM_SLOT - 2 - textWidth(t), y + ITEM_SLOT - 7, PAL.w); }
+    if (!BUILDINGS[it.type].run && !BUILDINGS[it.type].decor) drawText(ctx, `L${it.level}`, x + 2, y + 2, PAL.y);
+  });
+}
+
+// Attack range: a dashed ring around a selected tower (or card tower, or the hero).
+function drawRange(x, y, radius) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,205,117,0.10)';
+  ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,205,117,0.8)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function rangeOf(b) {
+  const def = battle.towerDef(b);
+  return def ? def.range : 0;
+}
+
 function centeredText(text, y, color, scale = 1) {
   drawText(ctx, text, Math.round((UW - textWidth(text, scale)) / 2), y, color, scale);
 }
@@ -2381,16 +2524,17 @@ function drawInfoPanel(b, now) {
   const title = b.type === 'house' ? `HOUSE LV ${lv} - ${HOUSE_LEVELS[lv - 1].name.toUpperCase()}`
     : def.decor || b.type === 'tree' || def.run ? def.name.toUpperCase() : `${def.name.toUpperCase()} LV ${lv}`;
   drawText(ctx, title, x, y, PAL.w);
+  if (canStore(b)) drawButton(storeButton(b), 'STORE', b.hp >= maxHp(b) && !underConstruction(game, b) ? 'normal' : 'off');
   if (buildMode) {
     drawText(ctx, 'TAP GRASS TO MOVE IT HERE', x, y + 12, PAL.y);
-    drawText(ctx, 'TO UPGRADE OR FIX: PRESS DONE, WALK UP TO IT', x, y + 24, PAL.S);
+    drawText(ctx, 'OR STORE IT IN YOUR ITEMS', x, y + 24, PAL.S);
     return;
   }
   if (def.run) {
     const card = CARDS[b.type] || CARDS.barricade;
     drawText(ctx, card.lines.join('  '), x, y + 10, PAL.s);
     if (!def.trap) drawText(ctx, `HP ${Math.ceil(b.hp)}/${maxHp(b)}`, x, y + 20, PAL.s);
-    drawText(ctx, 'RUN CARD - GONE WHEN THE RUN ENDS', x, y + 30, PAL.y);
+    drawText(ctx, 'CARD - LASTS THIS RUN', x, y + 30, PAL.y);
     return;
   }
 
@@ -2539,8 +2683,11 @@ function render(time, dt) {
     ctx.drawImage(img.shadow, Math.round(x), Math.round(y));
     ctx.drawImage(personImg(look, dir, frame), Math.round(x), Math.round(y - (moving && frame ? 1 : 0)));
   };
+  // Only what's on screen gets drawn (zoomed out, that saves hundreds of trees).
+  const vx0 = -ox / s - 2 * T, vx1 = (canvas.width - ox) / s + T, vy0 = -oy / s - T, vy1 = (canvas.height - oy) / s + 3 * T;
+  const onScreen = (b) => (b.c + sizeOf(b)) * T > vx0 && b.c * T < vx1 && (b.r + sizeOf(b)) * T > vy0 && b.r * T < vy1;
   const things = [
-    ...game.buildings.map((b) => ({ y: (b.r + sizeOf(b) - 1) * T, draw: () => drawBuilding(b, now) })),
+    ...game.buildings.filter(onScreen).map((b) => ({ y: (b.r + sizeOf(b) - 1) * T, draw: () => drawBuilding(b, now) })),
     // The village: shops, the well, shopkeepers and townsfolk.
     ...SHOPS.map((s) => ({ y: (s.r + 1) * T, draw: () => {
       ctx.drawImage(img.shadow, s.c * T, s.r * T, 2 * T, 2 * T);
@@ -2572,6 +2719,12 @@ function render(time, dt) {
 
   drawShots();
   if (selected) drawSelection(selected, time);
+  // Attack ranges: the selected tower's, and the hero's while you're giving them orders.
+  if (selected && phase !== 'end') {
+    const rr = rangeOf(selected);
+    if (rr) drawRange((selected.c + sizeOf(selected) / 2) * T, selected.r * T + 6, rr);
+  }
+  if ((shopOpen === 'hero' || movingHero) && !hero.down) drawRange(hero.x + T / 2, hero.y + T / 2, heroStats(game.hero.level).range * T);
   if (offer) drawChunkOutline(offer, PAL.y);
   drawPuffs();
 
@@ -2672,23 +2825,23 @@ function render(time, dt) {
   let hint;
   if (movingHero) hint = 'TAP WHERE YOUR HERO SHOULD STAND GUARD';
   else if (phase === 'wave') hint = `WAVE ${run.wave} - ${battle.remaining} ZOMBIES LEFT`;
-  else if (run.pending) hint = `PLACE ${BUILDINGS[run.pending.type].name.toUpperCase()}${run.pending.left > 1 ? ` (${run.pending.left} LEFT)` : ''} - OR AUTO`;
+  else if (placingItem) hint = `TAP YOUR LAND TO PLACE ${BUILDINGS[placingItem.type].name.toUpperCase()}${placingItem.n > 1 ? ` (${placingItem.n} LEFT)` : ''}`;
   else if (placing) hint = `TAP YOUR LAND TO PLACE A ${BUILDINGS[placing].name.toUpperCase()}`;
   else if (phase === 'home' && !buildMode) hint = isKingWave(run.wave + 1) ? `WAVE ${run.wave + 1} IS A KING WAVE - GET READY` : `WAVE ${run.wave + 1} NEXT - BUILD, THEN START IT`;
   else if (buildMode && selected) hint = 'TAP GRASS TO MOVE IT HERE';
   else if (buildMode) hint = 'BUILD MODE - TAP A BUILDING TO MOVE IT';
   else hint = 'TAP A BUILDING - DRAG TO LOOK AROUND';
   centeredText(hint, UH - BAR_H + 4, phase === 'wave' ? PAL.R : placing ? PAL.y : PAL.s);
-  if (run.pending) drawButton(buttons.left, 'AUTO', 'good');
-  else if (phase === 'home') drawButton(buttons.left, buildMode ? 'DONE' : 'BUILD', buildMode ? 'good' : 'normal');
+  if (phase === 'home') drawButton(buttons.left, buildMode || placingItem ? 'DONE' : 'BUILD', buildMode || placingItem ? 'good' : 'normal');
   else drawButton(buttons.left, `SPEED ${speed}X`);
   drawButton(buttons.home, buildMode ? 'ADD' : 'HOME', buildMode ? 'primary' : 'normal');
   if (phase === 'home') {
-    const ready = !run.choices && !run.pending;
-    const label = !ready ? (run.choices ? 'PICK A CARD' : 'PLACE CARD') : isKingWave(run.wave + 1) ? 'KING WAVE!' : 'START WAVE';
+    const ready = !run.choices;
+    const label = !ready ? 'PICK A CARD' : isKingWave(run.wave + 1) ? 'KING WAVE!' : 'START WAVE';
     drawButton(buttons.main, label, ready ? 'primary' : 'off');
   } else drawButton(buttons.main, 'SURVIVE...', 'off');
 
+  if (phase === 'home' && !run.choices && !showPanel()) drawItems(); // the info panel covers it
   if (menuOpen) drawBuildMenu();
   if (shopOpen) drawShop();
   if (lookOpen) drawLook(time);
