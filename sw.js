@@ -1,9 +1,11 @@
-// Offline support: keep a copy of the game on the phone. (Every module main.js imports must be listed here:
-// one missing file and the whole cache refuses to install.)
-// Serves the saved copy instantly and refreshes it in the background,
-// so a new version shows up on the next launch.
+// Offline support: keep a copy of the game on the phone, one cache per published version.
+// tools/publish.ps1 stamps VERSION with the commit, so every publish installs a fresh cache (fetched past the
+// browser's own HTTP cache), throws the old cache away, and takes over the open page; main.js then reloads on
+// the home screen, or shows UPDATE READY mid-game. Every module main.js imports must be listed in FILES: one
+// missing file and the whole cache refuses to install.
 
-const CACHE = `defense-${self.registration.scope}`;
+const VERSION = 'dev';
+const CACHE = `defense-${VERSION}-${self.registration.scope}`;
 const FILES = [
   './',
   './index.html',
@@ -26,11 +28,16 @@ const FILES = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
-  e.waitUntil(self.clients.claim());
+  // Older versions of this copy of the game go (a preview build has its own scope and keeps its cache).
+  e.waitUntil(caches.keys()
+    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k.endsWith(self.registration.scope)).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
 });
 
 self.addEventListener('fetch', (e) => {
@@ -41,18 +48,11 @@ self.addEventListener('fetch', (e) => {
   if (req.url.slice(self.registration.scope.length).startsWith('preview/')) return;
 
   // version.json, and everything while developing locally, comes from the network first.
-  if (req.url.endsWith('version.json') || self.location.hostname === 'localhost') {
-    e.respondWith(fetch(req).catch(() => caches.match(req)));
+  if (req.url.includes('version.json') || self.location.hostname === 'localhost') {
+    e.respondWith(fetch(req, { cache: 'no-store' }).catch(() => caches.match(req, { ignoreSearch: true })));
     return;
   }
 
-  e.respondWith(
-    caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(req, { ignoreSearch: true });
-      const fresh = fetch(req)
-        .then((res) => { if (res.ok) cache.put(req, res.clone()); return res; })
-        .catch(() => cached);
-      return cached || fresh;
-    }),
-  );
+  // Everything else comes from this version's cache (the network only for anything not listed above).
+  e.respondWith(caches.open(CACHE).then(async (cache) => (await cache.match(req, { ignoreSearch: true })) || fetch(req)));
 });

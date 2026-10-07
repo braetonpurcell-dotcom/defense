@@ -26,6 +26,9 @@ function Export-Branch([string]$Branch, [string]$Dest, [string]$Channel) {
   $sha = (git -C $repo rev-parse --short $Branch).Trim()
   $json = @{ channel = $Channel; branch = $Branch; commit = $sha } | ConvertTo-Json -Compress
   [IO.File]::WriteAllText((Join-Path $Dest 'version.json'), $json)
+  # Stamp the offline cache with this build, so phones install a fresh copy and drop the old one.
+  $sw = Join-Path $Dest 'sw.js'
+  [IO.File]::WriteAllText($sw, [IO.File]::ReadAllText($sw).Replace("const VERSION = 'dev';", "const VERSION = '$sha';"))
   Write-Host "$Channel <- $Branch @ $sha"
 }
 

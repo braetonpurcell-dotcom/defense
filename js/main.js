@@ -1452,6 +1452,7 @@ function resetUiState() {
 
 // After the game-over screen: a brand new life, starting at the home screen.
 function afterEnd() {
+  if (updateReady) { location.reload(); return; } // a new version is waiting; it opens on the menu
   const keep = carryOver();
   newLife();
   Object.assign(game, keep);
@@ -3094,6 +3095,18 @@ requestAnimationFrame(frame);
 // Save when the app goes to the background, so timers and collections aren't lost.
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveGame(); });
 
+// Offline copy of the game (sw.js). When a new version takes over: reload on the home screen, where there's
+// nothing to lose; mid-game, say so and reload once the run ends.
+let updateReady = false;
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    // Phones keep the app open for days: look for a new version whenever it comes back to the front.
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; } // the very first install: nothing to swap
+    if (phase === 'title') location.reload();
+    else { updateReady = true; showToast('UPDATE READY - IT LOADS NEXT TIME YOU OPEN THE GAME'); }
+  });
 }
