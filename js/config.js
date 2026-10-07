@@ -3,44 +3,46 @@
 export const T = 24;               // tile size in pixels
 export const CHUNK = 6;            // tiles per land plot side
 export const CHUNKS = 8;           // the buyable land: an 8×8 grid of plots
-// The world (owner's sketch v1, sketches/overall-rough-world-design.json): 24×24 plots, one sketch square per
-// plot. The buyable 8×8 land sits in the middle, from plot (8,8) to (15,15).
+// The world (owner's sketch v2, sketches/overall-rough-world-design-v2.json): one sketch square per plot.
+// The map itself is 10 plots wide (MAP_P0..MAP_P1: mountains on the left edge, ocean on the right) and 24 tall,
+// inside a 24×24-plot grid; the camera never shows past the map's edges. The buyable 8×8 land is plots 8..15.
 export const WORLD_PLOTS = 24;
 export const LAND0 = 8, LAND1 = LAND0 + CHUNKS - 1;   // first/last plot of the buyable land (both axes)
 export const N = CHUNK * WORLD_PLOTS;   // 144: world width in tiles
 export const NR = N;                    // 144: world height in tiles
 export const WORLD = N * T;             // world width in pixels
 export const WORLD_H = NR * T;          // world height in pixels
+export const MAP_P0 = 7, MAP_P1 = 16;   // first/last plot column of the map (the camera stays inside)
 
 // One letter per plot (the sketch's own letters):
-// x danger zone (zombie country) · W mountains · T ocean · t / z forest band (z = where the zombie road runs)
-// g / w your land (w = has a pond) · H river band (in the mountains: a stream) · d river band where the path
-// crosses · B open world (village, NPCs).
+// x danger zone (zombie country) · W mountains · T ocean · t / z forest band (z = where the zombie path runs)
+// g your land (the river across its middle, rows 10-11, is drawn in code) · H river band · d river band where the
+// path crosses · B open world (the village). Outside the map (columns 0-6 and 17-23) is just mountains and ocean.
 export const WORLD_MAP = [
-  'xxxxxxxxxxxxxxxxxxxxxxxx',
-  'Wxxxxxxxxxxxxxxxxxxxxxxx',
-  'WWxxxxxxxxxxxxxxxxxxxxxx',
-  'WWWxxxxxxxxxxxxxxxxxxxxT',
-  'WWWWxxxxxxxxxxxxxxxxxxTT',
-  'WWWWWWxxxxxxxxxxxxxxxTTT',
-  'WWWWWWtttttzztttttTTTTTT',
-  'WWWWWWWttttzztttttTTTTTT',
+  'WWWWWWWxxxxxxxxxxTTTTTTT',
+  'WWWWWWWxxxxxxxxxxTTTTTTT',
+  'WWWWWWWxxxxxxxxxxTTTTTTT',
+  'WWWWWWWxxxxxxxxxxTTTTTTT',
+  'WWWWWWWxxxxxxxxxxTTTTTTT',
+  'WWWWWWWxxxxxxxxxxTTTTTTT',
+  'WWWWWWWttttzzttttTTTTTTT',
+  'WWWWWWWttttzzttttTTTTTTT',
   'WWWWWWWWggggggggTTTTTTTT',
   'WWWWWWWWggggggggTTTTTTTT',
   'WWWWWWWWggggggggTTTTTTTT',
   'WWWWWWWWggggggggTTTTTTTT',
   'WWWWWWWWggggggggTTTTTTTT',
-  'WWWWWWWWgwggggwgTTTTTTTT',
-  'WWWWHWWWgwggggggTTTTTTTT',
-  'WWWHWHWWggggggggTTTTTTTT',
-  'WWWWWWHHHttdHHtHTTTTTTTT',
+  'WWWWWWWWggggggggTTTTTTTT',
+  'WWWWWWWWggggggggTTTTTTTT',
+  'WWWWWWWWggggggggTTTTTTTT',
+  'WWWWWWWHHttdHHtHTTTTTTTT',
   'WWWWWWWWtHHHdtHtTTTTTTTT',
   'WWWWWWWBBBBBBBBBTTTTTTTT',
-  'WWWWWWBBBBBBBBBBTTTTTTTT',
-  'WWWWWBBBBBBBBBBTTTTTTTTT',
-  'WWWWWBBBBBBBBBTTTTTTTTTT',
-  'WWWWBBBBBBBBBBTTTTTTTTTT',
-  'WWWBBBBBBBBBBBTTTTTTTTTT',
+  'WWWWWWWBBBBBBBBBTTTTTTTT',
+  'WWWWWWWBBBBBBBBTTTTTTTTT',
+  'WWWWWWWBBBBBBBTTTTTTTTTT',
+  'WWWWWWWBBBBBBBTTTTTTTTTT',
+  'WWWWWWWBBBBBBBTTTTTTTTTT',
 ];
 
 export const START_GOLD = 200;

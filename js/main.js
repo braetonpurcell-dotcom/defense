@@ -10,7 +10,7 @@ import { hasCardArt, cardRows } from './art-cards.js';
 import { heroRows, heroPalette, HERO_DEFAULT, LOOK_PARTS } from './art-hero.js';
 import { rowsToCanvas, drawText, textWidth } from './gfx.js';
 import {
-  T, CHUNK, CHUNKS, N, NR, WORLD, WORLD_H, WORLD_MAP, LAND0, LAND1, START_GOLD, landPrice, BOSS_EVERY, TOP_RUNS, BUILDINGS, waveBonus, killGold, sizeOf,
+  T, CHUNK, CHUNKS, N, NR, WORLD, WORLD_H, WORLD_MAP, LAND0, LAND1, MAP_P0, MAP_P1, START_GOLD, landPrice, BOSS_EVERY, TOP_RUNS, BUILDINGS, waveBonus, killGold, sizeOf,
   hpFor, towerStats, upgradeCost, BUILD_COST,
   MAX_LEVEL, DECOR, CARDS, RARITY, rarityOdds, SKIP_GOLD, OMENS, gemsForRun,
   PETS, PET_MEAL, PET_FED_HOURS, STORE_ITEMS, BLACKSMITH_GOODS, CHAPEL_PRAYER, NPC_ROLES, BUILDER_REPAIR_PER_SEC, GOALS, HERO_MAX_LEVEL, heroStats, heroUpgradeCost, TIME_SCALE, fighterScale, waveLevel, GUARD_RADIUS, APPLICANTS, REROLL_PRICE, TRAITS, NPC_NAMES,
@@ -47,7 +47,7 @@ const PATH_COLS = [O + 23, O + 24];        // the path runs straight down these 
 
 // The zombie path: 2 tiles wide, from the zombies' den in the danger zone, winding down through the forest
 // band, then straight down through your land to the bridge.
-const WIGGLE_END = (LAND0 + 3) * CHUNK;    // 66: below this the path runs straight
+const WIGGLE_END = LAND0 * CHUNK;          // 48: from your land down, the path runs straight
 const ROAD_TOP = 33;                       // a few tiles inside the danger zone (which ends at row 35)
 const roadLeft = (r) => (r >= WIGGLE_END ? O + 23 : O + 23 + Math.round(1.4 * Math.sin((WIGGLE_END - 1 - r) * 0.45)));
 const ROAD = new Set();
@@ -60,8 +60,8 @@ const DANGER_BOTTOM = 36;                  // rows above this are zombie country
 const CAVE = { x: roadLeft(ROAD_TOP) * T + T / 2, y: ROAD_TOP * T, c: roadLeft(ROAD_TOP), r: ROAD_TOP };
 const isCave = (c, r) => r === ROAD_TOP && (c === CAVE.c || c === CAVE.c + 1);
 
-// Ponds, where the sketch has water: a long lake on the west side of your land and a small pond on the east.
-const PONDS = [{ cx: O + 8.5, cy: O + 35.5, rx: 2.3, ry: 4.7 }, { cx: O + 38.5, cy: O + 32.5, rx: 2.3, ry: 2.3 }];
+// Ponds: none in sketch v2 (the river across the middle of your land took their place).
+const PONDS = [];
 const POND = new Set();
 for (const p of PONDS) {
   for (let r = Math.floor(p.cy - p.ry); r <= Math.ceil(p.cy + p.ry); r++) {
@@ -215,7 +215,7 @@ const inWorld = (c, r) => c >= 0 && r >= 0 && c < N && r < NR;
 function fits(b, c, r, size = sizeOf(b)) {
   for (let y = r; y < r + size; y++) {
     for (let x = c; x < c + size; x++) {
-      if (!inWorld(x, y) || !ownsTile(x, y) || isWater(x, y)) return false;
+      if (!inWorld(x, y) || !ownsTile(x, y) || isWet(x, y)) return false;
       const other = buildingAt(x, y);
       if (other && other !== b) return false;
     }
@@ -251,8 +251,12 @@ function ground(c, r) {
 // The mountain "stream" plots hold small mountain lakes (the river's source).
 const isMountainLake = (c, r) => ground(c, r) === 'stream'
   && (((c % CHUNK) - 2.5) / 2.4) ** 2 + (((r % CHUNK) - 2.5) / 2.4) ** 2 <= 1;
-const isRiver = (c, r) => r >= RIVER_TOP && r <= RIVER_BOTTOM && c >= 34 && Math.abs(r - riverCentre(c)) <= 1.2
-  && ground(c, r) !== 'ocean';
+// Two rivers (sketch v2): one across the middle of your land (plot rows 10-11) and one below it, in front of the
+// village. The path crosses each on a wooden bridge.
+const MID_RIVER_TOP = (LAND0 + 2) * CHUNK, MID_RIVER_BOTTOM = MID_RIVER_TOP + 2 * CHUNK - 1; // 60..71
+const midRiverCentre = (c) => MID_RIVER_TOP + 5.5 + 2.6 * Math.sin(c * 0.13 + 1);
+const isRiver = (c, r) => ground(c, r) !== 'ocean' && ((r >= RIVER_TOP && r <= RIVER_BOTTOM && c >= 34 && Math.abs(r - riverCentre(c)) <= 1.2)
+  || (r >= MID_RIVER_TOP && r <= MID_RIVER_BOTTOM && Math.abs(r - midRiverCentre(c)) <= 1.2));
 const isBridge = (c, r) => isRiver(c, r) && PATH_COLS.includes(c);
 // Any water you can't walk on (ponds, river, mountain lakes). Ocean is separate.
 const isWet = (c, r) => (isWater(c, r) || isRiver(c, r) || isMountainLake(c, r)) && !isBridge(c, r);
@@ -1050,12 +1054,16 @@ const HUD_H = 16, BAR_H = 42, PANEL_H = 46;
 const cam = { x: WORLD / 2, y: WORLD / 2, z: 1 }; // z = CSS pixels per world pixel
 const MAX_Z = 6;
 // Zoomed all the way out, the whole world (WORLD wide × WORLD_H tall) fits on screen.
-const minZ = () => Math.min(viewW / WORLD, viewH / WORLD_H);
+// The camera never shows past the map's edges (owner's sketch v2): zoomed all the way out, the map's width or its
+// height fills the screen, whichever comes first.
+const MAP_X0 = MAP_P0 * CHUNK * T, MAP_X1 = (MAP_P1 + 1) * CHUNK * T;
+const minZ = () => Math.max(viewW / (MAP_X1 - MAP_X0), viewH / WORLD_H);
 
 function clampCam() {
   cam.z = Math.max(minZ(), Math.min(MAX_Z, cam.z));
-  cam.x = Math.max(0, Math.min(WORLD, cam.x));
-  cam.y = Math.max(0, Math.min(WORLD_H, cam.y));
+  const hw = viewW / 2 / cam.z, hh = viewH / 2 / cam.z;
+  cam.x = Math.max(MAP_X0 + hw, Math.min(MAP_X1 - hw, cam.x));
+  cam.y = Math.max(hh, Math.min(WORLD_H - hh, cam.y));
 }
 
 // The starting view: your starting land above the bridge (with the bridge and village edge in sight).
@@ -3041,6 +3049,7 @@ function tick(dt) {
     showToast(`${BUILDINGS[done.type].name.toUpperCase()} REACHED LV ${done.level}!`);
     saveGame();
   }
+  clampCam(); // the camera always stays inside the map
   if (toast && (toast.time -= dt) <= 0) toast = null;
   puffs = puffs.filter((p) => (p.t += dt) < 0.5);
   floats = floats.filter((f) => (f.t += dt) < 0.9);

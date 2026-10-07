@@ -294,3 +294,8 @@ What was built:
   - Ten townsfolk wander the village and go indoors during waves.
 - **Settings gear** (top right): CONTINUE, RESTART (3 taps within 4 s; the run still counts) and TOP RUNS. The game pauses while it's open.
 - **Save:** key `defense.save.v5`. A v1 save passes on top runs, lives, gems, art packs and look.
+- **World sketch v2** (`sketches/overall-rough-world-design-v2.json`; owner's note: "river needs a bridge to go over... not allowed to zoomout more that the edges of the map. add a bridge for the zombies to cross the river in the middle of the map"):
+  - The map is 10 plots wide (`MAP_P0..MAP_P1` = 7..16): mountains on the left edge, ocean on the right.
+  - The camera can't pan or zoom past those edges (`clampCam`, `minZ`).
+  - A second river crosses the middle of your land (plot rows 10-11), with a bridge on the path.
+  - The path is straight from the forest down. The old ponds are gone.
