@@ -1,0 +1,165 @@
+{
+  "title": "overall rough world design v2",
+  "mode": "map",
+  "width": 24,
+  "height": 24,
+  "tile": "one square = one game tile (24 px); plots are 6×6 tiles",
+  "legend": {
+    "1": {
+      "color": "#ff3d6e",
+      "label": "starter plot"
+    },
+    "g": {
+      "color": "#38b764",
+      "label": "Grass main build area"
+    },
+    "d": {
+      "color": "#c29a5b",
+      "label": "Path / dirt"
+    },
+    "w": {
+      "color": "#41a6f6",
+      "label": "Water"
+    },
+    "t": {
+      "color": "#257179",
+      "label": "Trees / forest unbuyable"
+    },
+    "W": {
+      "color": "#94b0c2",
+      "label": "mountains"
+    },
+    "T": {
+      "color": "#3e42b1",
+      "label": "ocean"
+    },
+    "H": {
+      "color": "#ef7d57",
+      "label": "river"
+    },
+    "B": {
+      "color": "#8b5a2b",
+      "label": "open world"
+    },
+    "z": {
+      "color": "#5d275d",
+      "label": "Zombie route"
+    },
+    "x": {
+      "color": "#000000",
+      "label": "Danger zone"
+    }
+  },
+  "fullLegend": {
+    "1": {
+      "color": "#ff3d6e",
+      "label": "starter plot"
+    },
+    "2": {
+      "color": "#00e0a0",
+      "label": "Custom 2"
+    },
+    "g": {
+      "color": "#38b764",
+      "label": "Grass main build area"
+    },
+    "d": {
+      "color": "#c29a5b",
+      "label": "Path / dirt"
+    },
+    "w": {
+      "color": "#41a6f6",
+      "label": "Water"
+    },
+    "t": {
+      "color": "#257179",
+      "label": "Trees / forest unbuyable"
+    },
+    "W": {
+      "color": "#94b0c2",
+      "label": "mountains"
+    },
+    "T": {
+      "color": "#3e42b1",
+      "label": "ocean"
+    },
+    "H": {
+      "color": "#ef7d57",
+      "label": "river"
+    },
+    "F": {
+      "color": "#ffcd75",
+      "label": "bridge"
+    },
+    "B": {
+      "color": "#8b5a2b",
+      "label": "open world"
+    },
+    "D": {
+      "color": "#f4a6c6",
+      "label": "Decoration"
+    },
+    "z": {
+      "color": "#5d275d",
+      "label": "Zombie route"
+    },
+    "n": {
+      "color": "#f4f4f4",
+      "label": "NPC / person"
+    },
+    "x": {
+      "color": "#000000",
+      "label": "Danger zone"
+    },
+    "?": {
+      "color": "#c86bff",
+      "label": "Idea / note here"
+    }
+  },
+  "order": [
+    "g",
+    "d",
+    "w",
+    "t",
+    "W",
+    "T",
+    "H",
+    "F",
+    "B",
+    "D",
+    "z",
+    "n",
+    "x",
+    "?",
+    "1",
+    "2"
+  ],
+  "rows": [
+    ".......xxxxxxxxxx.......",
+    ".......xxxxxxxxxx.......",
+    ".......xxxxxxxxxx.......",
+    ".......xxxxxxxxxx.......",
+    ".......xxxxxxxxxx.......",
+    ".......xxxxxxxxxx.......",
+    ".......ttttzztttt.......",
+    ".......ttttzztttt.......",
+    ".......WggggggggT.......",
+    ".......WggggggggT.......",
+    ".......wwggwwwwgT.......",
+    ".......Wwwwwggwww.......",
+    ".......WggggggggT.......",
+    ".......WggggggggT.......",
+    ".......Wggg11gggT.......",
+    ".......Wggg11gggT.......",
+    ".......HHttdHHtHT.......",
+    ".......WtHHHdtHtT.......",
+    ".......BBBBBBBBBT.......",
+    ".......BBBBBBBBBT.......",
+    ".......BBBBBBBBTT.......",
+    ".......BBBBBBBTTT.......",
+    ".......BBBBBBBTTT.......",
+    ".......BBBBBBBTTT......."
+  ],
+  "note": "This i the over all look. river needs a bridge to go over and so on. not allowed to zoomout more that the edges of the map. add a bridge for the zombies to cross the river in the middle of the map.\n",
+  "savedAt": "2026-10-07T02:10:46.830Z"
+}

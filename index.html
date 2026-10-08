@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Defense</title>
+  <meta name="theme-color" content="#1a1c2c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Defense">
+  <meta name="description" content="Defend the village from endless zombie waves. One gets through and the run is over.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #1a1c2c;
+      overflow: hidden;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    canvas {
+      display: block;
+      position: fixed;
+      inset: 0;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
