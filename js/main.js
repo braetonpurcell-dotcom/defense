@@ -153,19 +153,7 @@ function upgradeSave(s) {
   }
   s.stats ??= { bestWave: 0 };
   s.hero ??= { level: 1 }; // your hero (a mobile tower, standing on their pad)
-  // Older saves had no pad: put one where the hero stood (or the start spot), on the nearest free tile of your land.
-  if (!s.buildings.some((b) => b.type === 'heropad')) {
-    const want = s.hero.post || HERO_START;
-    const own = new Set(s.owned);
-    const free = (c, r) => own.has(chunkKey(...chunkOfTile(c, r))) && !isWet(c, r)
-      && !s.buildings.some((b) => c >= b.c && r >= b.r && c < b.c + sizeOf(b) && r < b.r + sizeOf(b));
-    let spot = null;
-    for (let d = 0; d < 12 && !spot; d++) {
-      for (let r = want.r - d; r <= want.r + d && !spot; r++) for (let c = want.c - d; c <= want.c + d && !spot; c++) if (free(c, r)) spot = { c, r };
-    }
-    if (spot) s.buildings.push({ id: s.nextId++, type: 'heropad', c: spot.c, r: spot.r, level: 1, hp: heroStats(s.hero.level).hp });
-  }
-  delete s.hero.post;
+  // Older saves have no hero pad: ensureHeroPad adds one once the map is set up (it needs the terrain).
   s.items ??= []; // your inventory: cards and buildings not on the map ({ type, level, n })
   s.runState ??= null; // the current run (saved, so you can close the app between waves)
   // Records outlive every death: lives played and your top runs (shown on the home screen).
@@ -596,6 +584,23 @@ function buildTerrain() {
   buildWalkable();
 }
 
+// Older saves had no hero pad: put one where the hero stood (or the start spot), on the nearest free tile of your
+// land. Runs after the terrain code is set up (upgradeSave runs before it, at load).
+function ensureHeroPad(s) {
+  if (!s.buildings.some((b) => b.type === 'heropad')) {
+    const want = s.hero.post || HERO_START;
+    const own = new Set(s.owned);
+    const free = (c, r) => own.has(chunkKey(...chunkOfTile(c, r))) && !isWet(c, r)
+      && !s.buildings.some((b) => c >= b.c && r >= b.r && c < b.c + sizeOf(b) && r < b.r + sizeOf(b));
+    let spot = null;
+    for (let d = 0; d < 12 && !spot; d++) {
+      for (let r = want.r - d; r <= want.r + d && !spot; r++) for (let c = want.c - d; c <= want.c + d && !spot; c++) if (free(c, r)) spot = { c, r };
+    }
+    if (spot) s.buildings.push({ id: s.nextId++, type: 'heropad', c: spot.c, r: spot.r, level: 1, hp: heroStats(s.hero.level).hp });
+  }
+  delete s.hero.post;
+}
+
 // Draw the visible part of the ground. Called with the world transform already set (scale s, offset ox/oy).
 function drawTerrain(s, ox, oy) {
   const px0 = Math.max(0, Math.floor(-ox / s / PLOT_PX)), py0 = Math.max(0, Math.floor(-oy / s / PLOT_PX));
@@ -615,6 +620,7 @@ function drawTerrain(s, ox, oy) {
     }
   }
 }
+ensureHeroPad(game);
 buildTerrain();
 
 // ---------- Walking (the townsfolk) ----------
@@ -1187,7 +1193,7 @@ function restoreRun() {
   // Older saves: one card out of three on offer, and cards that no longer exist.
   if (run.choices) {
     run.choices = run.choices.map((id) => (CARDS[id] ? id : null));
-    run.picksLeft ??= 1;
+    run.picksLeft = r.picksLeft ?? 1;
     if (!run.choices.some(Boolean)) { run.choices = null; run.picksLeft = 0; }
   }
   phase = 'home';
