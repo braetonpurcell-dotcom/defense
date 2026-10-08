@@ -4,7 +4,7 @@ Written 2026-10-06 at the end of a long build session, right before the conversa
 Read this top to bottom before touching anything. Where this file and the code disagree, **trust the code**
 and fix this file. Where this file and `DESIGN.md` / `QUESTIONS.md` / `README.md` disagree, this file is newer.
 
-## 0c. LATEST (2026-10-07, branch draft/v3-hunt): zombies hunt your towers - the owner's interview answers
+## 0c. LATEST (2026-10-07, LIVE as 8c079a9, branch draft/v3-hunt = main): zombies hunt your towers - the owner's interview answers
 Built from `reports/answers.md` (the Design Interviewer's log; every entry there is now marked DONE with notes).
 This overrides the NPC, shop, pet and goal parts of the sections below.
 - **Tower hunting** (battle.js `isTarget`, `recomputeFlow`, `flood`): one flow field from every standing target
@@ -28,6 +28,8 @@ This overrides the NPC, shop, pet and goal parts of the sections below.
 - **Late waves:** Wall-Breaker from 15, Swarm from 25, Tank from 30 (`debut`), with a NEW: toast on their first wave.
   The bottom bar previews the next wave (`wavePreview`).
 - **TOP RUNS** rows: waves, kills, gold, omen.
+- Zombies walk `WILD_SPEED` (4x) until they reach your land (owner: the walk took too long). The flow-field flood rounds to float32 (`Math.fround`), or fractional costs (the wall-breaker field) cut the field short.
+- OPEN: the owner's first playtest (Blood Moon) reached wave 15 with almost no damage and gold piling up (9k by wave 12): waves 5-15 need to hit harder so zombies actually reach the towers. Owner is testing on the phone next.
 - The owner said to stop using the bots (tools/bots.html): test by driving the game through `window.defense`, balance by owner playtests. js/bots.js was only updated to keep compiling.
 
 ## 0b. DONE (2026-10-07): the Fable review pass
