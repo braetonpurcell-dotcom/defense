@@ -23,14 +23,29 @@ export function textWidth(text, scale = 1) {
   return Math.max(0, text.length * 4 - 1) * scale;
 }
 
+// Each glyph is drawn once per colour into a tiny canvas and then stamped with drawImage: the HUD draws a few
+// hundred characters a frame, and one drawImage beats up to fifteen fillRects each.
+const glyphs = new Map();
+function glyph(ch, color) {
+  const key = `${color}:${ch}`;
+  let g = glyphs.get(key);
+  if (!g) {
+    const bits = FONT[ch] || FONT['?'];
+    g = document.createElement('canvas');
+    g.width = 3; g.height = 5;
+    const c = g.getContext('2d');
+    c.fillStyle = color;
+    for (let i = 0; i < 15; i++) if (bits[i]) c.fillRect(i % 3, Math.floor(i / 3), 1, 1);
+    glyphs.set(key, g);
+  }
+  return g;
+}
+
 export function drawText(ctx, text, x, y, color = PAL.w, scale = 1) {
-  ctx.fillStyle = color;
   let cx = Math.round(x);
+  const cy = Math.round(y);
   for (const ch of text.toUpperCase()) {
-    const glyph = FONT[ch] || FONT['?'];
-    for (let i = 0; i < 15; i++) {
-      if (glyph[i]) ctx.fillRect(cx + (i % 3) * scale, Math.round(y) + Math.floor(i / 3) * scale, scale, scale);
-    }
+    if (ch !== ' ') ctx.drawImage(glyph(ch, color), cx, cy, 3 * scale, 5 * scale);
     cx += 4 * scale;
   }
 }

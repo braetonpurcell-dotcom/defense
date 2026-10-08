@@ -278,10 +278,10 @@ export const MONSTERS = {
   king: { name: 'Zombie King', hp: 400, speed: 16, damage: 30, rate: 1.5, gold: 100, big: true },
 };
 
-// Zombies get tougher each wave: health grows steadily with a gentle curve on top (x4.2 by wave 10, x10 by
-// wave 20), damage with waveLevel. Gold grows at a similar rate, so a wave's zombies are worth roughly the
-// same share of what it takes to kill them all the way up.
-export const hpScale = (wave) => (1 + 0.25 * (wave - 1)) * 1.03 ** (wave - 1);
+// Zombies get tougher each wave: health grows steadily with a curve on top (x5.5 by wave 10, x17 by wave 20,
+// x45 by wave 30), damage with waveLevel. Gold grows only linearly, so the first ten waves pay for the base
+// and after that every wave is a bigger ask: a run always ends, the question is where.
+export const hpScale = (wave) => (1 + 0.25 * (wave - 1)) * 1.06 ** (wave - 1);
 export const damageScale = (level = 1) => 1 + 0.35 * (level - 1);
 
 // Gold: the only income. Tougher zombies pay more. KILL_GOLD multiplies every zombie's gold.

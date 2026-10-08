@@ -147,12 +147,140 @@ function lamp(p) {
   p.rect(7, 2, 16, 9, 'y'); p.frame(6, 1, 17, 10); p.rect(9, 4, 14, 7, 'w'); p.hline(6, 17, 0, 't');
 }
 
-export const SHOP_ART = { petshop, store, tavern };
-// Every village building: its art function and its picture size in pixels.
+// ---------- Village props: fences, gardens, the market, the churchyard, the fields, the shore ----------
+
+// Fence (24×24). v says which sides the rails leave the tile by: 'h' east+west, 'v' north+south, and the corners
+// 'nw' (east+south), 'ne' (west+south), 'sw' (east+north), 'se' (west+north). A gate is simply a missing tile.
+function fence(p, v = 'h') {
+  const rails = (x0, x1) => { p.hline(x0, x1, 12, 'h'); p.hline(x0, x1, 13, 'N'); p.hline(x0, x1, 17, 'h'); p.hline(x0, x1, 18, 'N'); };
+  const upright = (y0, y1) => { p.vline(11, y0, y1, 'h'); p.vline(12, y0, y1, 'N'); };
+  const east = v === 'h' || v === 'nw' || v === 'sw', west = v === 'h' || v === 'ne' || v === 'se';
+  const north = v === 'v' || v === 'sw' || v === 'se', south = v === 'v' || v === 'nw' || v === 'ne';
+  if (west) rails(0, 12);
+  if (east) rails(12, 23);
+  if (north) upright(0, 12);
+  if (south) upright(12, 23);
+  p.rect(10, 8, 13, 21, 'n'); p.vline(13, 8, 21, 'N'); p.hline(10, 13, 7, 'h'); // the post
+}
+
+// Flower bed (24×24): a patch of green with five blooms; v picks the colours.
+function flowerbed(p, v = 0) {
+  p.rect(2, 13, 21, 22, 'G'); p.hline(2, 21, 22, 'N'); p.hline(3, 20, 14, 'g');
+  const cols = ['R', 'y', 'w'];
+  [[5, 11], [11, 8], [17, 11], [8, 16], [15, 16]].forEach(([x, y], i) => {
+    const ch = cols[(v + i) % 3];
+    p.vline(x, y + 2, y + 4, 'G');
+    p.put(x, y, ch); p.put(x - 1, y + 1, ch); p.put(x + 1, y + 1, ch); p.put(x, y + 2, ch); p.put(x, y + 1, 'Y');
+  });
+}
+
+function bench(p) {
+  p.rect(2, 1, 21, 2, 'h'); p.put(3, 3, 'n'); p.put(20, 3, 'n');
+  p.rect(2, 6, 21, 8, 'h'); p.hline(2, 21, 8, 'n');
+  p.rect(3, 9, 4, 14, 'N'); p.rect(19, 9, 20, 14, 'N');
+}
+
+// Cart (48×36, 2×1): a hay load on a wooden bed, two wheels, shafts.
+function cart(p) {
+  p.rect(10, 8, 37, 13, 'Y');
+  for (const [x, y] of [[12, 9], [20, 10], [28, 9], [34, 11], [16, 12]]) p.put(x, y, 'y');
+  p.rect(6, 14, 41, 25, 'n'); p.hline(6, 41, 18, 'N'); p.hline(6, 41, 22, 'N'); p.rect(5, 12, 42, 13, 'h');
+  p.rect(0, 18, 5, 19, 'N');
+  for (const x of [12, 36]) { p.disc(x, 29, 5.5, 'N'); p.disc(x, 29, 3.5, 'n'); p.put(x, 29, 'N'); }
+}
+
+function hay(p) {
+  p.rect(3, 9, 20, 21, 'Y');
+  for (const [x, y] of [[3, 9], [20, 9], [3, 21], [20, 21]]) p.put(x, y, '.');
+  p.hline(4, 19, 12, 'y'); p.hline(4, 19, 17, 'y'); p.vline(8, 9, 21, 'n'); p.vline(15, 9, 21, 'n');
+}
+
+// Signpost (24×36): an arrow board on a post.
+function signpost(p) {
+  p.rect(11, 6, 12, 35, 'N');
+  p.rect(3, 9, 18, 16, 'h'); p.frame(2, 8, 19, 17); p.put(20, 12, 'h'); p.put(21, 12, 'h');
+  p.hline(5, 8, 12, 'k'); p.hline(10, 12, 12, 'k'); p.hline(14, 16, 12, 'k');
+}
+
+function crates(p) {
+  p.rect(2, 12, 13, 21, 'n'); p.frame(1, 11, 14, 22); p.vline(7, 12, 21, 'N'); p.hline(2, 13, 16, 'N');
+  p.rect(8, 3, 18, 11, 'h'); p.frame(7, 2, 19, 12); p.vline(13, 3, 11, 'N');
+}
+
+function barrel(p) {
+  p.rect(6, 5, 17, 22, 'n');
+  for (const [x, y] of [[6, 5], [17, 5], [6, 22], [17, 22]]) p.put(x, y, '.');
+  p.vline(9, 5, 22, 'N'); p.vline(14, 5, 22, 'N'); p.hline(6, 17, 8, 'E'); p.hline(6, 17, 19, 'E'); p.rect(7, 3, 16, 5, 'h');
+}
+
+// A small tree in a tub (24×36), for the civic square.
+function tubtree(p) {
+  p.disc(11.5, 13, 7, 'G'); p.disc(10, 11, 4, 'g'); p.put(8, 10, 'l');
+  p.rect(11, 19, 12, 26, 'N');
+  p.rect(7, 27, 16, 34, 'n'); p.frame(6, 26, 17, 35); p.hline(7, 16, 30, 'E');
+}
+
+// Washing line (48×24, 2×1): three shirts pegged between two posts.
+function washline(p) {
+  p.rect(2, 2, 3, 22, 'N'); p.rect(44, 2, 45, 22, 'N'); p.hline(4, 43, 5, 'k');
+  for (const [x, ch] of [[9, 'w'], [21, 'u'], [33, 'r']]) {
+    p.rect(x, 6, x + 6, 13, ch); p.put(x - 1, 7, ch); p.put(x + 7, 7, ch); p.rect(x + 2, 4, x + 4, 5, 'k');
+  }
+}
+
+function gravestone(p) {
+  p.disc(11.5, 9.5, 3.5, 's'); p.rect(8, 9, 15, 21, 's'); p.vline(15, 9, 21, 'S');
+  p.hline(10, 13, 13, 'k'); p.hline(10, 13, 16, 'k');
+  p.put(6, 21, 'l'); p.put(17, 20, 'l');
+}
+
+// Trees (24×36): a dark pointed yew for the churchyard, a round fruit tree for the orchard.
+function yew(p) {
+  p.rect(10, 25, 13, 34, 'N'); p.vline(13, 25, 34, 'n');
+  p.disc(11.5, 18, 8, 'G'); p.disc(11.5, 11, 6, 'G'); p.disc(11.5, 5, 3.5, 'G'); p.disc(9.5, 15, 3.5, 'g');
+}
+function fruittree(p) {
+  p.rect(10, 25, 13, 34, 'N'); p.vline(13, 25, 34, 'n');
+  p.disc(11.5, 16, 9, 'G'); p.disc(9.5, 13, 5, 'g');
+  for (const [x, y] of [[6, 14], [13, 10], [17, 17], [10, 20], [15, 14]]) p.put(x, y, 'R');
+}
+
+// A clump of wheat (24×24) for the ploughed field.
+function crop(p) {
+  for (const [x, y] of [[6, 10], [12, 7], [18, 10]]) { p.vline(x, y, 22, 'Y'); p.rect(x - 1, y - 4, x + 1, y, 'y'); p.vline(x, y - 3, y - 1, 'D'); }
+}
+
+// A duck (24×24) on the pond, with a ripple.
+function duck(p) {
+  p.hline(7, 17, 22, 'c');
+  p.disc(12, 18, 3.5, 'w'); p.disc(15.5, 14.5, 2, 'w'); p.put(18, 15, 'R'); p.put(16, 14, 'k'); p.put(11, 18, 'W');
+}
+
+// A wooden dock (96×24, 4×1) out over the ocean, and a rowing boat with a sail (48×24, 2×1).
+function dock(p) {
+  p.rect(0, 6, 95, 17, 'h');
+  for (let x = 5; x < 96; x += 6) p.vline(x, 6, 17, 'n');
+  p.hline(0, 95, 17, 'N');
+  for (const x of [2, 46, 91]) p.rect(x, 10, x + 2, 22, 'N');
+  p.disc(70, 12, 2.5, 'Y');
+}
+function boat(p) {
+  p.rect(4, 11, 43, 20, 'n'); p.put(4, 20, '.'); p.put(43, 20, '.');
+  p.hline(3, 44, 10, 'N'); p.hline(5, 42, 15, 'N'); p.rect(20, 12, 27, 13, 'h');
+  p.vline(23, 0, 10, 'N'); p.rect(24, 2, 33, 8, 'w');
+}
+
+// Every village building and prop: its art function and its picture size in pixels. Pictures stand on the
+// bottom edge of their footprint, centred, so tall ones overhang the tile behind.
 export const VILLAGE_ART = {
   petshop: [petshop, 48, 48], store: [store, 48, 48], tavern: [tavern, 48, 48],
   blacksmith: [blacksmith, 48, 48], chapel: [chapel, 48, 72], townhall: [townhall, 72, 72],
   cottage: [cottage, 48, 48], stall: [stall, 48, 36], lamp: [lamp, 24, 36],
+  fence: [fence, 24, 24], flowerbed: [flowerbed, 24, 24], bench: [bench, 24, 16], cart: [cart, 48, 36],
+  hay: [hay, 24, 24], signpost: [signpost, 24, 36], crates: [crates, 24, 24], barrel: [barrel, 24, 24],
+  tubtree: [tubtree, 24, 36], washline: [washline, 48, 24], gravestone: [gravestone, 24, 24],
+  yew: [yew, 24, 36], fruittree: [fruittree, 24, 36], crop: [crop, 24, 24], duck: [duck, 24, 24],
+  dock: [dock, 96, 24], boat: [boat, 48, 24],
 };
 
 export function villageRows(type, variant = 0) {
@@ -161,10 +289,6 @@ export function villageRows(type, variant = 0) {
   draw(p, variant);
   p.outline();
   return p.rows();
-}
-
-export function shopRows(type) {
-  return villageRows(type);
 }
 
 export function wellRows() {

@@ -1,6 +1,6 @@
 import {
   SPRITES, PAL, PAL_RUNNER, PAL_BRUTE, PAL_KING, PAL_FLASH,
-  grassRows, dirtRows, waterRows, treeRows, shadowRows, hash,
+  grassRows, dirtRows, furrowRows, waterRows, treeRows, shadowRows, hash,
   mountainRows, peakRows, oceanRows, dangerRows, deadTreeRows, meadowRows, bridgeRows,
 } from './art.js';
 import { wallRows, WALL_N, WALL_E, WALL_S, WALL_W } from './art-walls.js';
@@ -64,7 +64,7 @@ const CAVE = { x: roadLeft(ROAD_TOP) * T + T / 2, y: ROAD_TOP * T, c: roadLeft(R
 const isCave = (c, r) => r === ROAD_TOP && (c === CAVE.c || c === CAVE.c + 1);
 
 // Ponds: none in sketch v2 (the river across the middle of your land took their place).
-const PONDS = [];
+const PONDS = [{ cx: 84.5, cy: 110, rx: 2.6, ry: 1.4 }]; // the village duck pond, beside the tavern
 const POND = new Set();
 for (const p of PONDS) {
   for (let r = Math.floor(p.cy - p.ry); r <= Math.ceil(p.cy + p.ry); r++) {
@@ -212,7 +212,22 @@ let owned = new Set(game.owned);
 const ownsChunk = (cx, cy) => owned.has(chunkKey(cx, cy));
 const ownsTile = (c, r) => ownsChunk(...chunkOfTile(c, r));
 const covers = (b, c, r) => c >= b.c && r >= b.r && c < b.c + sizeOf(b) && r < b.r + sizeOf(b);
-const buildingAt = (c, r) => game.buildings.find((b) => covers(b, c, r));
+// Which building covers a tile: a map from tile to building, rebuilt whenever the buildings list changes
+// length, a building is moved (layoutChanged), or a new game loads. Pathfinding and the wall joins ask this
+// thousands of times a second, so it mustn't scan the list.
+let tileIndex = new Map(), indexedGame = null, indexedLen = -1, layoutVersion = 0, indexedVersion = -1;
+const layoutChanged = () => { layoutVersion++; };
+function buildingAt(c, r) {
+  if (indexedGame !== game || indexedLen !== game.buildings.length || indexedVersion !== layoutVersion) {
+    tileIndex = new Map();
+    for (const b of game.buildings) {
+      const s = sizeOf(b);
+      for (let rr = b.r; rr < b.r + s; rr++) for (let cc = b.c; cc < b.c + s; cc++) tileIndex.set(rr * N + cc, b);
+    }
+    indexedGame = game; indexedLen = game.buildings.length; indexedVersion = layoutVersion;
+  }
+  return tileIndex.get(r * N + c);
+}
 const inWorld = (c, r) => c >= 0 && r >= 0 && c < N && r < NR;
 
 // Can a building of this size (b, or a new one of `type`) sit with its top-left corner at (c, r)?
@@ -282,41 +297,97 @@ const isVillageGate = (c, r) => PATH_COLS.includes(c) && r === villageGateRow(c)
 // ---------- The village ----------
 // The bottom of the valley (sketch "B") is the village you're defending: never buyable, no forest. From the
 // bridge, the village street runs down to the plaza.
-const PLAZA = { c0: O + 18, c1: O + 29, r0: RIVER_BOTTOM + 3, r1: RIVER_BOTTOM + 6 };     // 110..113
-const STREET_END = RIVER_BOTTOM + 20;   // 127: the main street runs from the bridge down to the Town Hall here
+// Ground: a market square around the well, a civic square the street flows into (the Town Hall stands in it),
+// two lanes of cottages running east-west, and a ploughed field in the south-west. All in absolute tiles.
+const PLAZA = { c0: 64, c1: 78, r0: 110, r1: 114 };   // the market square: the well sits in the middle (71,112)
+const CIVIC = { c0: 66, c1: 76, r0: 126, r1: 132 };   // the civic square
+const STREET_END = 126;                                // the street (cols 71-72) ends where the civic square begins
+const LANES = [{ r: 119, c0: 47, c1: 86 }, { r: 124, c0: 53, c1: 81 }];   // Lane A and Lane B
+const FIELD = { c0: 51, c1: 61, r0: 134, r1: 139 };   // the field inside the west fence
+const inBox = (q, c, r) => c >= q.c0 && c <= q.c1 && r >= q.r0 && r <= q.r1;
 const isTrail = (c, r) => PATH_COLS.includes(c) && r >= villageGateRow(c) && r < STREET_END;
-const isPlaza = (c, r) => (c >= PLAZA.c0 && c <= PLAZA.c1 && r >= PLAZA.r0 && r <= PLAZA.r1)
-  || (c >= O + 20 && c <= O + 26 && r >= STREET_END + 3 && r <= STREET_END + 4); // and a little square below the Town Hall
+const isLane = (c, r) => LANES.some((l) => r === l.r && c >= l.c0 && c <= l.c1);
+const isPlaza = (c, r) => inBox(PLAZA, c, r) || inBox(CIVIC, c, r) || isLane(c, r);
+const isField = (c, r) => inBox(FIELD, c, r);
 const inVillage = (c, r) => ground(c, r) === 'open';
-// Buildings you can go into (w×h tiles; their pictures can stand taller than their footprint). You talk to
-// the keeper standing beside each door.
+// Buildings you can go into (w×h tiles; their pictures can stand taller than their footprint). The keeper
+// stands beside the door, which is on the bottom edge, so every one of these fronts a square or a lane.
 const SHOPS = [
-  { id: 'petshop', name: 'Pet Shop', c: O + 12, r: RIVER_BOTTOM + 1 },
-  { id: 'store', name: 'General Store', c: O + 31, r: RIVER_BOTTOM + 1 },
-  { id: 'tavern', name: 'Tavern', c: O + 36, r: RIVER_BOTTOM + 1 },
-  { id: 'blacksmith', name: 'Blacksmith', c: O + 12, r: PLAZA.r0 + 2 },
-  { id: 'chapel', name: 'Chapel', c: O + 34, r: PLAZA.r0 + 2 },
-  { id: 'townhall', name: 'Town Hall', c: O + 22, r: STREET_END, w: 3, h: 3 },
+  { id: 'store', name: 'General Store', c: 65, r: 108 },             // north edge of the market square...
+  { id: 'petshop', name: 'Pet Shop', c: 68, r: 108 },
+  { id: 'blacksmith', name: 'Blacksmith', c: 74, r: 108 },           // ...east of the street: first past the bridge
+  { id: 'tavern', name: 'Tavern', c: 77, r: 108 },                   // next to the duck pond
+  { id: 'chapel', name: 'Chapel', c: 82, r: 115 },                   // in its churchyard, gate onto Lane A
+  { id: 'townhall', name: 'Town Hall', c: 70, r: 127, w: 3, h: 3 }, // in the civic square
 ];
 for (const s of SHOPS) { s.w ??= 2; s.h ??= 2; s.door = { c: s.c + Math.floor(s.w / 2), r: s.r + s.h }; }
-const WELL = { c: O + 20, r: PLAZA.r1 };
-// The families you're protecting: ten cottages along the main street.
+const WELL = { c: 71, r: 112 };
+// The families you're protecting: five cottages on each lane, each with a fenced front garden.
 const FAMILIES = ['MILLER', 'BAKER', 'FLETCHER', 'COOPER', 'THATCHER', 'POTTER', 'WEAVER', 'TANNER', 'MASON', 'CARTER'];
-const HOMES = [[20, 115], [26, 115], [16, 115], [30, 115], [20, 119], [26, 119], [16, 119], [30, 119], [20, 123], [26, 123]]
-  .map(([c, r], i) => ({ id: 'cottage', v: i, c: O + c, r, w: 2, h: 2, family: FAMILIES[i] }));
-// Little things that make it a village: market stalls on the plaza, lamps along the street, flower gardens.
-const PROPS = [
-  { id: 'stall', v: 0, c: O + 19, r: PLAZA.r0, w: 2, h: 1 }, { id: 'stall', v: 1, c: O + 27, r: PLAZA.r0, w: 2, h: 1 },
-  ...[117, 121, 125].flatMap((r) => [{ id: 'lamp', c: O + 22, r, w: 1, h: 1 }, { id: 'lamp', c: O + 25, r, w: 1, h: 1 }]),
-  { id: 'lamp', c: O + 18, r: PLAZA.r0 + 2, w: 1, h: 1 }, { id: 'lamp', c: O + 29, r: PLAZA.r0 + 2, w: 1, h: 1 },
-  ...[117, 121].flatMap((r) => [16, 17, 30, 31].map((c) => ({ id: 'flowers', c: O + c, r, w: 1, h: 1 }))),
+const HOMES = [
+  [47, 116], [53, 116], [59, 116], [65, 116], [74, 116],   // Lane A (doors open onto row 119)
+  [53, 121], [59, 121], [65, 121], [74, 121], [80, 121],   // Lane B (doors open onto row 124)
+].map(([c, r], i) => ({ id: 'cottage', v: i, c, r, w: 2, h: 2, family: FAMILIES[i] }));
+// One cottage's garden: flowers beside the house, a fence along the lane with the door column left open as the
+// gate, and a post column on the garden's far side. Two of them hang out their washing instead.
+const garden = (c, r, washing) => [
+  ...(washing ? [{ id: 'washline', c: c + 2, r, w: 2, h: 1 }] : [{ id: 'flowerbed', v: (c + r) % 3, c: c + 2, r }, { id: 'flowerbed', v: (c + r + 1) % 3, c: c + 3, r }]),
+  { id: 'flowerbed', v: (c + r + 2) % 3, c: c + 2, r: r + 1 }, { id: 'flowerbed', v: (c + r) % 3, c: c + 3, r: r + 1 },
+  { id: 'fence', v: 'h', c, r: r + 2 }, { id: 'fence', v: 'h', c: c + 2, r: r + 2 }, { id: 'fence', v: 'h', c: c + 3, r: r + 2 },
+  { id: 'fence', v: 'se', c: c + 4, r: r + 2 }, { id: 'fence', v: 'v', c: c + 4, r }, { id: 'fence', v: 'v', c: c + 4, r: r + 1 },
 ];
+// A fenced box from (c0,r0) to (c1,r1), with gaps at the gates.
+const fenceBox = (c0, r0, c1, r1, gates = []) => [
+  { id: 'fence', v: 'nw', c: c0, r: r0 }, { id: 'fence', v: 'ne', c: c1, r: r0 }, { id: 'fence', v: 'sw', c: c0, r: r1 }, { id: 'fence', v: 'se', c: c1, r: r1 },
+  ...Array.from({ length: c1 - c0 - 1 }, (_, i) => [{ id: 'fence', v: 'h', c: c0 + 1 + i, r: r0 }, { id: 'fence', v: 'h', c: c0 + 1 + i, r: r1 }]).flat(),
+  ...Array.from({ length: r1 - r0 - 1 }, (_, i) => [{ id: 'fence', v: 'v', c: c0, r: r0 + 1 + i }, { id: 'fence', v: 'v', c: c1, r: r0 + 1 + i }]).flat(),
+].filter((f) => !gates.some(([gc, gr]) => gc === f.c && gr === f.r));
+// Everything else that makes it a village. Nothing sits on the street columns 71-72 or on a lane row.
+const PROPS = [
+  // The entrance, first thing after the bridge.
+  { id: 'signpost', c: 70, r: 108 },
+  { id: 'lamp', c: 70, r: 110 }, { id: 'lamp', c: 73, r: 110 },
+  // The market square.
+  { id: 'crates', c: 67, r: 110 }, { id: 'barrel', c: 76, r: 110 },
+  { id: 'stall', v: 0, c: 65, r: 112, w: 2, h: 1 }, { id: 'stall', v: 1, c: 76, r: 112, w: 2, h: 1 },
+  { id: 'bench', c: 68, r: 113 }, { id: 'bench', c: 74, r: 113 },
+  { id: 'cart', c: 75, r: 114, w: 2, h: 1 },
+  { id: 'lamp', c: 64, r: 114 }, { id: 'lamp', c: 78, r: 114 },
+  // Street lamps on the grass between the squares and the lanes.
+  { id: 'lamp', c: 70, r: 115 }, { id: 'lamp', c: 73, r: 115 }, { id: 'lamp', c: 70, r: 120 }, { id: 'lamp', c: 73, r: 120 },
+  // The duck pond by the tavern (water tiles 83-86 × 109, 82-87 × 110, 83-86 × 111).
+  { id: 'duck', c: 84, r: 110 }, { id: 'duck', c: 86, r: 111 },
+  // Cottage gardens and fences.
+  ...HOMES.flatMap((h, i) => garden(h.c, h.r, i === 2 || i === 8)),
+  // The churchyard: a fence with a gate below the chapel door, gravestones and two yews.
+  ...fenceBox(80, 113, 86, 118, [[83, 118]]),
+  { id: 'gravestone', c: 81, r: 116 }, { id: 'gravestone', c: 81, r: 117 }, { id: 'gravestone', c: 85, r: 116 }, { id: 'gravestone', c: 85, r: 117 },
+  { id: 'yew', c: 81, r: 114 }, { id: 'yew', c: 85, r: 114 },
+  // The civic square around the Town Hall (door at 71,130; the mayor stands at 70,130).
+  { id: 'lamp', c: 66, r: 126 }, { id: 'lamp', c: 76, r: 126 }, { id: 'lamp', c: 66, r: 132 }, { id: 'lamp', c: 76, r: 132 },
+  { id: 'tubtree', c: 69, r: 130 }, { id: 'tubtree', c: 73, r: 130 },
+  { id: 'bench', c: 67, r: 131 }, { id: 'bench', c: 75, r: 131 },
+  // The wheat field (west) and the orchard (east) along the south edge; their north fences close the square.
+  ...fenceBox(50, 133, 62, 140, [[56, 133]]),
+  ...[52, 54, 56, 58, 60].flatMap((c) => [135, 137, 139].map((r) => ({ id: 'crop', c, r }))),
+  { id: 'scarecrow', c: 56, r: 136 }, { id: 'hay', c: 51, r: 134 }, { id: 'hay', c: 52, r: 134 },
+  { id: 'cart', c: 57, r: 132, w: 2, h: 1 },
+  ...fenceBox(66, 133, 80, 140, [[71, 133]]),
+  ...[68, 70, 72, 74, 76, 78].flatMap((c) => [135, 138].map((r) => ({ id: 'fruittree', c, r }))),
+  // A dock and a boat on the ocean east of the square.
+  { id: 'dock', c: 93, r: 112, w: 4, h: 1 }, { id: 'boat', c: 95, r: 114, w: 2, h: 1 },
+].map((p) => ({ w: 1, h: 1, ...p }));
 const covering = (list, c, r) => list.find((s) => c >= s.c && c < s.c + s.w && r >= s.r && r < s.r + s.h);
 const shopAt = (c, r) => covering(SHOPS, c, r);
 const homeAt = (c, r) => covering(HOMES, c, r);
-// Blocked: buildings, homes, props, the well, and the keepers standing beside each door.
-const villageBlocked = (c, r) => !!shopAt(c, r) || !!homeAt(c, r) || !!covering(PROPS, c, r)
-  || (c === WELL.c && r === WELL.r) || SHOPS.some((s) => c === s.c && r === s.r + s.h);
+// Tiles nobody walks through: buildings, homes, props, the well, and the keeper beside each door.
+const BLOCKED = new Set();
+for (const s of [...SHOPS, ...HOMES, ...PROPS]) for (let r = s.r; r < s.r + s.h; r++) for (let c = s.c; c < s.c + s.w; c++) BLOCKED.add(r * N + c);
+BLOCKED.add(WELL.r * N + WELL.c);
+for (const s of SHOPS) BLOCKED.add((s.r + s.h) * N + s.c);
+const villageBlocked = (c, r) => BLOCKED.has(r * N + c);
+// Flat props get no shadow under them.
+const FLAT_PROPS = new Set(['lamp', 'fence', 'flowerbed', 'crop', 'gravestone', 'duck', 'dock', 'boat', 'hay', 'bench']);
 // Only plots of your 8×8 land can be bought, and only next to land you already own.
 function canBuy(cx, cy) {
   if (!isLandPlot(cx, cy) || ownsChunk(cx, cy)) return false;
@@ -332,7 +403,7 @@ const forestTree = (c, r) => {
 };
 // A few lone trees in the open world, away from the village.
 const meadowTree = (c, r) => ground(c, r) === 'open' && hash(c, r, 9) < 0.035 && !isTrail(c, r)
-  && !(c >= O + 8 && c <= O + 44 && r <= STREET_END + 6);
+  && !(c >= 44 && c <= 96 && r >= 108 && r <= 141); // never inside the village (fields and orchard included)
 
 // ---------- Art ----------
 
@@ -408,6 +479,8 @@ function drawGroundTile(g, c, r, x, y) {
     g.drawImage(img.bridge[c === PATH_COLS[0] ? 'w' : 'e'], x, y);
   } else if (isWet(c, r)) {
     g.drawImage(tileImg('water', (c * 3 + r) % 4, edgesOf(c, r, (a, b) => isWet(a, b) || isBridge(a, b) || ground(a, b) === 'ocean'), waterRows), x, y);
+  } else if (isField(c, r)) {
+    g.drawImage(tileImg('furrow', (c + r) % 4, edgesOf(c, r, isField), furrowRows), x, y);
   } else if (isTrail(c, r) || isPlaza(c, r)) {
     const dirt = (a, b) => isTrail(a, b) || isPlaza(a, b) || isBridge(a, b);
     const edges = edgesOf(c, r, dirt);
@@ -484,6 +557,7 @@ function buildOverview() {
     for (let c = 0; c < N; c++) {
       let col = GROUND_COLOR[ground(c, r)];
       if (isDirtPath(c, r) || isTrail(c, r) || isPlaza(c, r) || isBridge(c, r)) col = '#c29a5b';
+      else if (isField(c, r)) col = '#8d6a3a';
       else if (isWet(c, r)) col = '#41a6f6';
       else if (forestTree(c, r)) col = '#257179';
       else if (ground(c, r) === 'land' && !ownsTile(c, r) && !canBuy(...chunkOfTile(c, r))) col = '#2c7a52';
@@ -493,10 +567,22 @@ function buildOverview() {
   }
 }
 
+// Where zombies may walk: the path, the bridges, the village gate and your land (never water). Depends only on
+// the terrain and which plots you own, so it's worked out once here and read by the battle's flow field.
+const WALK = new Uint8Array(N * NR);
+function buildWalkable() {
+  for (let r = 0; r < NR; r++) {
+    for (let c = 0; c < N; c++) {
+      WALK[r * N + c] = !isWet(c, r) && (isRoad(c, r) || isBridge(c, r) || isVillageGate(c, r) || ownsTile(c, r)) ? 1 : 0;
+    }
+  }
+}
+
 // Redraw the ground after the land changes (bought a plot, new game).
 function buildTerrain() {
   plotCache.clear();
   buildOverview();
+  buildWalkable();
 }
 
 // Draw the visible part of the ground. Called with the world transform already set (scale s, offset ox/oy).
@@ -566,7 +652,7 @@ function findPath(v, isGoal, maxSteps, pickRandom, canStand = villagerCanStand) 
 // and open ground (not through its buildings, stalls or fences).
 const canStandAt = (c, r) => villagerCanStand(c, r)
   || (inWorld(c, r) && r >= DANGER_BOTTOM && (isRoad(c, r) || isBridge(c, r)
-    || ((isTrail(c, r) || isPlaza(c, r) || inVillage(c, r)) && !villageBlocked(c, r) && !meadowTree(c, r))));
+    || ((isTrail(c, r) || isPlaza(c, r) || inVillage(c, r)) && !isWet(c, r) && !villageBlocked(c, r) && !meadowTree(c, r))));
 const heroCanStand = canStandAt;
 
 const hero = {
@@ -624,7 +710,7 @@ const TOWNSFOLK_LOOKS = Array.from({ length: 10 }, (_, i) => {
   return { skin: pickPart(0, 3), hair: pickPart(1, 5), shirt: pickPart(2, 7), pants: pickPart(3, 2) };
 });
 const townsfolk = TOWNSFOLK_LOOKS.map((look, i) => ({
-  look, x: (PLAZA.c0 + 1 + (i % 5) * 2) * T, y: (PLAZA.r0 + 1 + Math.floor(i / 5) * 6) * T, path: null, wait: 1 + i * 0.4,
+  look, x: (PLAZA.c0 + 1 + (i % 5) * 2) * T, y: (PLAZA.r0 + 1 + Math.floor(i / 5) * 2) * T, path: null, wait: 1 + i * 0.4,
   t: Math.random() * 5, dir: 'down',
   canStand: (c, r) => inVillageFree(c, r) && !shopkeeperAt(c, r),
 }));
@@ -908,6 +994,12 @@ function npcThink(v, dt) {
     const p = npcInReach(v, b) ? [] : pathToReach(v, b);
     if (p) { v.job = b; v.path = p; v.wait = 0; return; }
   }
+  // Nothing to fix: a builder far from the guard point (a new hire at the Tavern, say) walks there and potters
+  // about near your walls, so they're close when something breaks.
+  if (!v.path?.length && Math.hypot(v.x / T - GUARD_POINT.c, v.y / T - GUARD_POINT.r) > GUARD_RADIUS - 3) {
+    v.path = pathToGuard(v) || [];
+    v.wait = 0;
+  }
 }
 
 const traitOf = (n) => TRAITS[n.trait] || {};
@@ -1036,9 +1128,9 @@ const buttons = {};
 function layoutUI() {
   const by = UH - 28;
   buttons.left = { x: 4, y: by, w: 44, h: 24 };      // BUILD at home, SPEED during a run
-  buttons.home = { x: 52, y: by, w: 44, h: 24, label: 'ME' };
+  buttons.home = { x: 52, y: by, w: 44, h: 24, label: 'BASE' };  // back to your land (ADD in build mode)
   buttons.main = { x: 100, y: by, w: UW - 104, h: 24 }; // DEFEND! / NEXT WAVE
-  buttons.repair = { x: 4, y: UH - BAR_H - 24, w: 76, h: 20 };
+  buttons.repair = { x: UW - 80, y: UH - BAR_H - 24, w: 76, h: 20 }; // right side: clear of the ITEMS tab
   buttons.settings = { x: UW - 24, y: HUD_H + 6, w: 20, h: 20 };
   buttons.zoomIn = { x: UW - 24, y: HUD_H + 30, w: 20, h: 20, label: '+' };
   buttons.zoomOut = { x: UW - 24, y: HUD_H + 54, w: 20, h: 20, label: '-' };
@@ -1054,30 +1146,30 @@ function layoutUI() {
   buttons.panel = { x: 4, y: py0, w: UW - 8, h: PANEL_H };
   buttons.upgrade = { x: UW - 66, y: py0 + 4, w: 58, h: 18, label: 'UPGRADE', primary: true };
   buttons.upgradeAll = { x: UW - 66, y: py0 + 24, w: 58, h: 18, label: 'ALL WALLS' };
-  // STORE: top right for things with no UPGRADE button (cards, decorations), else beside ALL WALLS.
-  buttons.store = { x: UW - 128, y: py0 + 24, w: 58, h: 18, label: 'STORE' };
-  buttons.storeTop = { x: UW - 66, y: py0 + 4, w: 58, h: 18, label: 'STORE' };
+  // PUT AWAY: top right for things with no UPGRADE button (cards, decorations), else beside ALL WALLS.
+  buttons.store = { x: UW - 128, y: py0 + 24, w: 58, h: 18, label: 'PUT AWAY' };
+  buttons.storeTop = { x: UW - 66, y: py0 + 4, w: 58, h: 18, label: 'PUT AWAY' };
 
-  // Build menu: two tabs (BUILD and LOOKS), up to 7 rows each.
-  const mw = Math.min(200, UW - 16), rowH = 19, top = 24, mh = top + 7 * rowH + 26;
+  // Build menu: three tabs (BUILD, LOOKS, PACKS), up to 7 rows each. Rows are 18 px tall: thumb-sized.
+  const mw = Math.min(200, UW - 16), rowH = 22, top = 26, mh = top + 7 * rowH + 26;
   const mx = Math.round((UW - mw) / 2), my = Math.round((UH - mh) / 2);
   const rowY = (i) => my + top + i * rowH;
   buttons.menu = { x: mx, y: my, w: mw, h: mh, rowH };
-  buttons.tabBuild = { x: mx + 4, y: my + 4, w: 44, h: 14, label: 'BUILD' };
-  buttons.tabLooks = { x: mx + 51, y: my + 4, w: 44, h: 14, label: 'LOOKS' };
-  buttons.tabStore = { x: mx + 98, y: my + 4, w: 44, h: 14, label: 'STORE' };
-  buttons.storeRows = THEMES.map((t, i) => ({ x: mx + mw - 46, y: rowY(i), w: 40, h: 15 }));
-  buttons.menuRows = MENU.map((type, i) => ({ type, x: mx + mw - 46, y: rowY(i), w: 40, h: 15, label: 'BUY' }));
-  buttons.themePrev = { x: mx + mw - 46, y: rowY(0), w: 19, h: 15, label: '<' };
-  buttons.themeNext = { x: mx + mw - 25, y: rowY(0), w: 19, h: 15, label: '>' };
-  buttons.decorRows = DECOR.map((type, i) => ({ type, x: mx + mw - 46, y: rowY(i + 1), w: 40, h: 15, label: 'BUY' }));
+  buttons.tabBuild = { x: mx + 4, y: my + 4, w: 44, h: 17, label: 'BUILD' };
+  buttons.tabLooks = { x: mx + 51, y: my + 4, w: 44, h: 17, label: 'LOOKS' };
+  buttons.tabStore = { x: mx + 98, y: my + 4, w: 44, h: 17, label: 'PACKS' };
+  buttons.storeRows = THEMES.map((t, i) => ({ x: mx + mw - 46, y: rowY(i), w: 40, h: 18 }));
+  buttons.menuRows = MENU.map((type, i) => ({ type, x: mx + mw - 46, y: rowY(i), w: 40, h: 18, label: 'BUY' }));
+  buttons.themePrev = { x: mx + mw - 46, y: rowY(0), w: 19, h: 18, label: '<' };
+  buttons.themeNext = { x: mx + mw - 25, y: rowY(0), w: 19, h: 18, label: '>' };
+  buttons.decorRows = DECOR.map((type, i) => ({ type, x: mx + mw - 46, y: rowY(i + 1), w: 40, h: 18, label: 'BUY' }));
   buttons.menuClose = { x: mx + Math.round(mw / 2) - 30, y: my + mh - 22, w: 60, h: 18, label: 'CLOSE' };
-  buttons.shopRows = [0, 1, 2, 3, 4, 5].map((i) => ({ x: mx + mw - 50, y: rowY(i), w: 44, h: 15 }));
+  buttons.shopRows = [0, 1, 2, 3, 4, 5].map((i) => ({ x: mx + mw - 50, y: rowY(i), w: 44, h: 18 }));
   // "YOUR LOOK": a preview on the left, one row per body part with < swatch >.
   buttons.lookRows = LOOK_PARTS.map((_, i) => ({
-    prev: { x: mx + mw - 74, y: rowY(i) + 8, w: 16, h: 15, label: '<' },
-    swatch: { x: mx + mw - 54, y: rowY(i) + 8, w: 28, h: 15 },
-    next: { x: mx + mw - 22, y: rowY(i) + 8, w: 16, h: 15, label: '>' },
+    prev: { x: mx + mw - 74, y: rowY(i) + 8, w: 16, h: 18, label: '<' },
+    swatch: { x: mx + mw - 54, y: rowY(i) + 8, w: 28, h: 18 },
+    next: { x: mx + mw - 22, y: rowY(i) + 8, w: 16, h: 18, label: '>' },
   }));
 
   // Card pick: up to 4 card rows, then REROLL and SKIP.
@@ -1093,7 +1185,7 @@ function layoutUI() {
   buttons.popup = { x: px, y: py, w: pw, h: ph };
   buttons.buy = { x: px + 8, y: py + ph - 28, w: 64, h: 20, label: 'BUY', primary: true };
   buttons.cancel = { x: px + pw - 72, y: py + ph - 28, w: 64, h: 20, label: 'NO' };
-  buttons.goHome = { x: px + 35, y: py + ph - 26, w: 80, h: 20, label: 'HOME', primary: true };
+  buttons.goHome = { x: px + 35, y: py + ph - 26, w: 80, h: 20, label: 'MENU', primary: true };
 
   // Home screen.
   const tx = Math.round(UW / 2 - 55), ty = Math.round(UH / 2);
@@ -1148,7 +1240,7 @@ const battle = new Battle({
     if (v.hp <= 0) { v.down = true; v.path = null; v.foe = null; addPuff(v.x + T / 2, v.y + T / 2); showToast(`YOUR ${v.isHero ? 'HERO' : NPC_ROLES[v.npc.role].name.toUpperCase()} IS DOWN!`); }
   },
   // Zombies walk the path, the bridge and your land (never water), heading for the village entrance.
-  walkable: (c, r) => inWorld(c, r) && !isWet(c, r) && (isRoad(c, r) || isBridge(c, r) || isVillageGate(c, r) || ownsTile(c, r)),
+  walkable: (c, r) => inWorld(c, r) && WALK[r * N + c] === 1,
   goals: () => PATH_COLS.map((c) => ({ c, r: villageGateRow(c) })),
   onBreakthrough: (m) => { addPuff(m.x, m.y); showToast('A ZOMBIE GOT INTO THE VILLAGE!'); },
   cave: () => ({ c: CAVE.c, r: CAVE.r }),
@@ -1648,7 +1740,6 @@ function shopItems() {
       { title: 'PRAY FOR LUCK', sub: `${formatCost(CHAPEL_PRAYER)} - +1 CARD REROLL THIS RUN`, label: 'PRAY',
         style: canAfford(game, CHAPEL_PRAYER) ? 'primary' : 'off',
         act: () => { if (!payFor(CHAPEL_PRAYER)) { showToast('NOT ENOUGH GOLD'); return; } run.rerolls++; showToast(`REROLLS: ${run.rerolls}`); } },
-      { title: 'THE BELL', sub: 'IT RINGS WHENEVER THE ZOMBIES COME', label: 'INFO', style: 'off', act: () => {} },
     ];
   }
   // Town Hall: the mayor's to-do list (your goals).
@@ -1719,7 +1810,7 @@ function shopItems() {
   // Tavern: whoever happens to be looking for work today (roguelike: you adapt to who turns up).
   if (!game.applicants) rollApplicants();
   const rows = game.applicants.map((a, i) => {
-    if (!a) return { title: '(HIRED)', sub: 'SOMEONE NEW COMES AFTER YOUR NEXT RUN', label: '-', style: 'off', act: () => {} };
+    if (!a) return { title: '(HIRED)', sub: 'SOMEONE NEW COMES AFTER THE NEXT WAVE', label: '-', style: 'off', act: () => {} };
     const r = NPC_ROLES[a.role], t = TRAITS[a.trait];
     return {
       title: `${a.name} - ${t.name} ${r.name.toUpperCase()}`,
@@ -1730,7 +1821,7 @@ function shopItems() {
     };
   });
   rows.push({
-    title: 'NEW FACES', sub: `SEND THEM AWAY AND SEE WHO ELSE COMES  ${formatCost(REROLL_PRICE)}`,
+    title: 'NEW FACES', sub: `SEE WHO ELSE IS LOOKING FOR WORK  ${formatCost(REROLL_PRICE)}`,
     label: 'REROLL', style: canAfford(game, REROLL_PRICE) ? 'primary' : 'off', act: rerollApplicants,
   });
   const count = (f) => game.npcs.filter(f).length;
@@ -1768,16 +1859,16 @@ function onWorldTap(sx, sy) {
     return;
   }
   const ht = heroTile();
-  if (!buildMode && !placing && !hero.down && c === ht.c && (r === ht.r || r === ht.r - 1)) { selected = null; shopOpen = 'hero'; return; }
+  if (!buildMode && !placing && !placingItem && !hero.down && c === ht.c && (r === ht.r || r === ht.r - 1)) { selected = null; shopOpen = 'hero'; return; }
   if (phase === 'wave') { showToast('TAP YOUR HERO TO MOVE THEM'); return; }
   // The wild parts of the valley: say what they are.
   const gr = ground(c, r);
   if (!isRoad(c, r) && !isTrail(c, r) && !isBridge(c, r) && !isPlaza(c, r)) {
-    if (r < DANGER_BOTTOM) { showToast('ZOMBIE COUNTRY - TOO DANGEROUS TO GO'); return; }
-    if (gr === 'mountain' || gr === 'stream') { showToast("MOUNTAINS - YOU CAN'T CLIMB THEM (YET)"); return; }
-    if (gr === 'ocean') { showToast('THE OCEAN - NO BOATS (YET)'); return; }
-    if (isRiver(c, r)) { showToast('THE RIVER - CROSS AT THE BRIDGE'); return; }
-    if (gr === 'forest' || gr === 'riverband') { showToast('DEEP FOREST - STAY ON THE PATH'); return; }
+    if (r < DANGER_BOTTOM) { showToast('ZOMBIE COUNTRY - THEY COME FROM UP HERE'); return; }
+    if (gr === 'mountain' || gr === 'stream') { showToast('THE MOUNTAINS - NOTHING GETS OVER THEM'); return; }
+    if (gr === 'ocean') { showToast('THE OCEAN'); return; }
+    if (isRiver(c, r)) { showToast('THE RIVER - ZOMBIES CROSS AT THE BRIDGE'); return; }
+    if (gr === 'forest' || gr === 'riverband') { showToast('DEEP FOREST - ONLY ZOMBIES GO IN THERE'); return; }
   }
   // The village: tap a shop (or its keeper) to go in.
   if (inVillage(c, r) || isTrail(c, r) || isBridge(c, r) || isPlaza(c, r)) {
@@ -1802,12 +1893,12 @@ function onWorldTap(sx, sy) {
     return;
   }
 
-  if (isRoad(c, r) && !ownsChunk(cx, cy) && !selected) { showToast('THE ZOMBIE ROAD'); return; }
+  if (isRoad(c, r) && !ownsChunk(cx, cy) && !selected) { showToast('THE ZOMBIES COME THIS WAY'); return; }
   if (!ownsChunk(cx, cy)) {
     if (selected) { selected = null; return; }
-    if (phase !== 'home') showToast('BUY LAND WHEN YOU ARE HOME');
+    if (phase !== 'home') showToast('BUY LAND BETWEEN WAVES');
     else if (canBuy(cx, cy)) offer = [cx, cy];
-    else showToast('BUY LAND NEXT TO YOUR BASE');
+    else showToast('YOU CAN ONLY BUY LAND NEXT TO YOURS');
     return;
   }
 
@@ -1823,6 +1914,7 @@ function onWorldTap(sx, sy) {
     if (fits(selected, c - half, r - half)) {
       selected.c = c - half;
       selected.r = r - half;
+      layoutChanged();
       selected = null;
       saveGame();
     } else {
@@ -1880,7 +1972,7 @@ function storeTap(theme) {
     game.theme = theme.id;
     showToast(`${theme.name.toUpperCase()} UNLOCKED!`);
   } else {
-    showToast(`NEED ${theme.price - game.gems} MORE GEMS - WIN RUNS TO EARN THEM`);
+    showToast(`NEED ${theme.price - game.gems} MORE GEMS - SURVIVE WAVES TO EARN THEM`);
   }
   saveGame();
 }
@@ -1947,6 +2039,7 @@ function onTap(sx, sy) {
   if (menuOpen) return onMenuTap(p);
   if (shopOpen) return onShopTap(p);
   if (lookOpen) return onLookTap(p);
+  if (inRect(p, buttons.settings)) { settingsOpen = true; restartTaps = 0; return; } // works during the card pick too
   if (run.choices) {
     const i = buttons.cards.findIndex((b, k) => k < run.choices.length && inRect(p, b));
     if (i >= 0) return pickCard(i);
@@ -1954,7 +2047,6 @@ function onTap(sx, sy) {
     if (inRect(p, buttons.skip)) return skipCard();
     return;
   }
-  if (inRect(p, buttons.settings)) { settingsOpen = true; restartTaps = 0; return; }
   if (inRect(p, buttons.zoomIn)) return zoomAt(viewW / 2, viewH / 2, cam.z * 1.5);
   if (inRect(p, buttons.zoomOut)) return zoomAt(viewW / 2, viewH / 2, cam.z / 1.5);
   // The ITEMS tab and bar.
@@ -1985,7 +2077,7 @@ function onTap(sx, sy) {
     if (phase === 'home' && inRect(p, buttons.upgrade) && repairCostOf(selected) > 0) repairOne(selected);
     else if (phase === 'home' && inRect(p, buttons.upgrade)) tryUpgrade(selected);
     else if (phase === 'home' && selected.type === 'wall' && inRect(p, buttons.upgradeAll)) upgradeAllWalls(selected.level);
-    else if (phase !== 'home' && (inRect(p, buttons.upgrade) || inRect(p, buttons.upgradeAll))) showToast('UPGRADE WHEN YOU ARE HOME');
+    else if (phase !== 'home' && (inRect(p, buttons.upgrade) || inRect(p, buttons.upgradeAll))) showToast('UPGRADE BETWEEN WAVES');
     return;
   }
   if (showRepair() && inRect(p, buttons.repair)) return repairAll();
@@ -2077,6 +2169,7 @@ function finishEdit(e) {
     const b = e.b, nc = e.to.c - e.dc, nr = e.to.r - e.dr;
     if (fits(b, nc, nr)) {
       b.c = nc; b.r = nr;
+      layoutChanged();
       const p = centerOf(b);
       addPuff(p.x, p.y);
       selected = null;
@@ -2140,7 +2233,7 @@ function drawMultiPanel() {
   drawText(ctx, `UPGRADE ALL: ${cost}G`, x, y + 12, game.gold >= cost ? PAL.y : PAL.R);
   drawText(ctx, 'TAP THE MAP TO DESELECT', x, y + 24, PAL.S);
   drawButton(buttons.upgrade, 'UPGRADE ALL', 'primary');
-  drawButton(buttons.store, 'STORE ALL', 'normal');
+  drawButton(buttons.store, 'PUT ALL AWAY', 'normal');
 }
 
 // ---------- Touch & mouse: tap, drag to pan, pinch / wheel to zoom ----------
@@ -2233,7 +2326,7 @@ function drawButton(b, label = b.label, style = b.primary ? 'primary' : 'normal'
   ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
   ctx.fillStyle = colors[1];
   ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, 2);
-  const s = b.h >= 24 && textWidth(label, 2) <= b.w - 8 && style !== 'normal' ? 2 : 1;
+  const s = b.h >= 24 && textWidth(label, 2) <= b.w - 8 ? 2 : 1;
   drawText(ctx, label, b.x + (b.w - textWidth(label, s)) / 2, b.y + Math.round((b.h - 5 * s) / 2) + 1,
     style === 'off' ? PAL.S : PAL.w, s);
 }
@@ -2464,7 +2557,7 @@ function drawCardPick() {
 function itemsLayout() {
   const barH = itemsOpen ? ITEM_SLOT + 8 : 0;
   const bar = { x: 0, y: UH - BAR_H - barH, w: UW, h: barH };
-  const tab = { x: Math.round(UW / 2) - 32, y: bar.y - 11, w: 64, h: 11 };
+  const tab = { x: Math.round(UW / 2) - 34, y: bar.y - 16, w: 68, h: 16 };
   return { bar, tab };
 }
 
@@ -2479,17 +2572,17 @@ function drawItems() {
   const count = game.items.reduce((sum, i) => sum + i.n, 0);
   panelBox(tab, itemsOpen ? PAL.S : PAL.t);
   const label = `ITEMS ${count}`;
-  drawText(ctx, label, tab.x + Math.round((tab.w - textWidth(label)) / 2) + 3, tab.y + 3, count ? PAL.y : PAL.s);
+  drawText(ctx, label, tab.x + Math.round((tab.w - textWidth(label)) / 2) + 3, tab.y + 6, count ? PAL.y : PAL.s);
   // A little arrow: up to open, down to close.
   ctx.fillStyle = PAL.w;
-  const ax = tab.x + 5, ay = tab.y + 4;
+  const ax = tab.x + 5, ay = tab.y + 7;
   if (itemsOpen) { ctx.fillRect(ax, ay, 5, 1); ctx.fillRect(ax + 1, ay + 1, 3, 1); ctx.fillRect(ax + 2, ay + 2, 1, 1); }
   else { ctx.fillRect(ax + 2, ay, 1, 1); ctx.fillRect(ax + 1, ay + 1, 3, 1); ctx.fillRect(ax, ay + 2, 5, 1); }
   if (!itemsOpen) return;
   ctx.fillStyle = PAL.k;
   ctx.fillRect(bar.x, bar.y, bar.w, bar.h);
   if (!game.items.length) {
-    centeredText('EMPTY - PICKED CARDS AND STORED BUILDINGS GO HERE', bar.y + 14, PAL.s);
+    centeredText('EMPTY - CARDS AND PUT-AWAY THINGS GO HERE', bar.y + 14, PAL.s);
     return;
   }
   game.items.forEach((it, i) => {
@@ -2546,13 +2639,13 @@ function drawInfoPanel(b, now) {
   drawText(ctx, title, x, y, PAL.w);
   if (canStore(b)) drawButton(storeButton(b), 'PUT AWAY', b.hp >= maxHp(b) ? 'normal' : 'off');
   if (buildMode) {
-    drawText(ctx, 'DRAG IT, OR TAP GRASS TO MOVE IT THERE', x, y + 12, PAL.y);
-    drawText(ctx, 'OR STORE IT IN YOUR ITEMS', x, y + 24, PAL.S);
+    drawText(ctx, b.type === 'tree' ? 'TAP GRASS TO MOVE IT THERE' : 'DRAG IT, OR TAP GRASS TO MOVE IT THERE', x, y + 12, PAL.y);
+    if (canStore(b)) drawText(ctx, 'OR PUT IT AWAY IN YOUR ITEMS', x, y + 24, PAL.S);
     return;
   }
   if (def.run) {
     const card = CARDS[b.type] || CARDS.barricade;
-    drawText(ctx, card.lines.join('  '), x, y + 10, PAL.s);
+    drawText(ctx, b.type === 'barricade' ? 'A STRONG WALL FROM A CARD' : card.lines.join('  '), x, y + 10, PAL.s);
     if (!def.trap) drawText(ctx, `HP ${Math.ceil(b.hp)}/${maxHp(b)}`, x, y + 20, PAL.s);
     drawText(ctx, 'CARD - LASTS THIS RUN', x, y + 30, PAL.y);
     return;
@@ -2615,7 +2708,7 @@ function drawBuildMenu() {
   panelBox(m);
   drawButton(buttons.tabBuild, 'BUILD', menuTab === 'build' ? 'primary' : 'normal');
   drawButton(buttons.tabLooks, 'LOOKS', menuTab === 'looks' ? 'primary' : 'normal');
-  drawButton(buttons.tabStore, 'STORE', menuTab === 'store' ? 'primary' : 'normal');
+  drawButton(buttons.tabStore, 'PACKS', menuTab === 'store' ? 'primary' : 'normal');
   const corner = menuTab === 'store' ? `GEMS ${game.gems}` : `G ${game.gold}`;
   drawText(ctx, corner, m.x + m.w - 6 - textWidth(corner), m.y + 8, menuTab === 'store' ? PAL.v : PAL.s);
   if (menuTab === 'store') {
@@ -2692,9 +2785,9 @@ function render(time, dt) {
     // The village: buildings, homes, stalls, lamps and gardens (pictures stand on their footprint's bottom edge),
     // the well, the keepers, and the townsfolk (indoors while a wave is on).
     ...[...SHOPS, ...HOMES, ...PROPS].filter(onScreen).map((s) => ({ y: (s.r + s.h - 1) * T, draw: () => {
-      if (s.id === 'flowers') { ctx.drawImage(levelImg('flowers', 1, 0, false), s.c * T, s.r * T); return; }
+      if (hasCardArt(s.id) || BUILDINGS[s.id]?.decor) { ctx.drawImage(levelImg(s.id, 1, 0, false), s.c * T, s.r * T); return; } // the scarecrow
       const im = villageImg(s.id, s.v || 0);
-      if (s.id !== 'lamp') ctx.drawImage(img.shadow, s.c * T, s.r * T, s.w * T, s.h * T);
+      if (!FLAT_PROPS.has(s.id)) ctx.drawImage(img.shadow, s.c * T, s.r * T, s.w * T, s.h * T);
       ctx.drawImage(im, s.c * T + Math.round((s.w * T - im.width) / 2), (s.r + s.h) * T - im.height);
     } })),
     { y: WELL.r * T, draw: () => ctx.drawImage(villageImg('well'), WELL.c * T, WELL.r * T) },
@@ -2769,8 +2862,8 @@ function render(time, dt) {
     const blink = Math.floor(time * 3) % 2 === 0;
     const sc = worldToScreen(CAVE.x + T / 2, CAVE.y + 4);
     const p = toUI(sc.x, sc.y);
-    const x = Math.round(Math.max(4, Math.min(UW - 13, p.x - 4.5)));
-    const y = Math.round(Math.max(HUD_H + 4, Math.min(UH - BAR_H - 15, p.y - 14)));
+    const x = Math.round(Math.max(4, Math.min(UW - 30, p.x - 4.5)));
+    const y = Math.round(Math.max(HUD_H + 16, Math.min(UH - BAR_H - 15, p.y - 14)));
     ctx.fillStyle = PAL.k;
     ctx.fillRect(x, y, 9, 11);
     ctx.fillStyle = blink ? PAL.r : PAL.R;
@@ -2798,8 +2891,7 @@ function render(time, dt) {
     drawText(ctx, mid, Math.round((UW - textWidth(mid)) / 2), 6, PAL.R);
   }
 
-  // Zoom buttons, repair button, info panel
-  drawGear(buttons.settings);
+  // Zoom buttons, repair button, info panel (the gear is drawn last, over the goal banner and toasts)
   drawButton(buttons.zoomIn);
   drawButton(buttons.zoomOut);
   if (showRepair()) drawButton(buttons.repair, `REPAIR ${repairCost()}G`, game.gold > 0 ? 'good' : 'off');
@@ -2815,13 +2907,13 @@ function render(time, dt) {
   else if (placingItem) hint = `${isWallType(placingItem.type) ? 'TAP OR DRAG A LINE TO PLACE' : 'TAP YOUR LAND TO PLACE'} ${BUILDINGS[placingItem.type].name.toUpperCase()}${placingItem.n > 1 ? ` (${placingItem.n} LEFT)` : ''}`;
   else if (placing) hint = `TAP YOUR LAND TO PLACE A ${BUILDINGS[placing].name.toUpperCase()}`;
   else if (phase === 'home' && !buildMode) hint = isKingWave(run.wave + 1) ? `WAVE ${run.wave + 1} IS A KING WAVE - GET READY` : `WAVE ${run.wave + 1} NEXT - BUILD, THEN START IT`;
-  else if (buildMode && selected) hint = 'DRAG IT, OR TAP GRASS TO MOVE IT THERE';
+  else if (buildMode && selected) hint = selected.type === 'tree' ? 'TAP GRASS TO MOVE IT THERE' : 'DRAG IT, OR TAP GRASS TO MOVE IT THERE';
   else if (buildMode) hint = 'DRAG TO MOVE - DRAG ACROSS WALLS TO SELECT';
   else hint = 'TAP A BUILDING - DRAG TO LOOK AROUND';
   centeredText(hint, UH - BAR_H + 4, phase === 'wave' ? PAL.R : placing ? PAL.y : PAL.s);
   if (phase === 'home') drawButton(buttons.left, buildMode || placingItem ? 'DONE' : 'BUILD', buildMode || placingItem ? 'good' : 'normal');
   else drawButton(buttons.left, fastForward ? 'FAST FWD' : `SPEED ${speed}X`, fastForward ? 'good' : 'normal');
-  drawButton(buttons.home, buildMode ? 'ADD' : 'HOME', buildMode ? 'primary' : 'normal');
+  drawButton(buttons.home, buildMode ? 'ADD' : 'BASE', buildMode ? 'primary' : 'normal');
   if (phase === 'home') {
     const ready = !run.choices;
     const label = !ready ? 'PICK A CARD' : isKingWave(run.wave + 1) ? 'KING WAVE!' : 'START WAVE';
@@ -2838,15 +2930,15 @@ function render(time, dt) {
   const goal = nextGoal();
   if (goal && phase === 'home') {
     const reward = Object.entries(goal.reward).map(([k, v]) => `${v}${k === 'gems' ? ' GEMS' : RES_LETTER[k]}`).join(' ');
-    const text = `GOAL: ${goal.text}  (+${reward})`;
+    const text = `${goal.text}  +${reward}`;
     ctx.fillStyle = 'rgba(26,28,44,0.8)';
-    ctx.fillRect(0, HUD_H, UW, 11);
-    drawText(ctx, text, Math.max(4, Math.round((UW - textWidth(text)) / 2)), HUD_H + 3, PAL.y);
+    ctx.fillRect(0, HUD_H, UW - 28, 11);
+    drawText(ctx, text, Math.max(4, Math.min(UW - 32 - textWidth(text), Math.round((UW - 28 - textWidth(text)) / 2))), HUD_H + 3, PAL.y);
   }
 
   if (toast) {
     const w = textWidth(toast.text) + 12;
-    const x = Math.round((UW - w) / 2), y = HUD_H + 14;
+    const x = Math.max(2, Math.min(UW - 28 - w, Math.round((UW - w) / 2))), y = HUD_H + 14;
     ctx.fillStyle = PAL.k;
     ctx.fillRect(x, y, w, 13);
     drawText(ctx, toast.text, x + 6, y + 4, PAL.w);
@@ -2866,9 +2958,10 @@ function render(time, dt) {
       centeredText('A ZOMBIE GOT THROUGH - GAME OVER', b.y + 6, PAL.R);
       centeredText(`YOU SURVIVED ${Math.max(0, run.wave - 1)} WAVES - ${run.kills} KILLS`, b.y + 16, PAL.w);
       centeredText(run.rank === 1 ? 'NEW BEST RUN!' : run.rank ? `TOP RUN NUMBER ${run.rank}!` : `GEMS +${run.gems}`, b.y + 26, PAL.y);
-      drawButton(buttons.goHome, 'HOME');
+      drawButton(buttons.goHome, 'MENU');
     }
   }
+  if (!offer && phase !== 'end') drawGear(buttons.settings);
   if (phase === 'title') drawTitle(time);
   if (settingsOpen) drawSettings();
   if (runsOpen) drawTopRuns();
@@ -2947,7 +3040,7 @@ function drawTitle(time) {
   const best = game.records.runs[0];
   centeredText(best ? `BEST: ${best.waves} WAVES` : 'NO RUNS YET', y0 + 44, PAL.s);
   centeredText(run.wave > 0 ? `YOUR RUN: WAVE ${run.wave}` : `LIFE ${game.records.lives}`, y0 + 56, PAL.l);
-  drawButton(buttons.titlePlay, run.wave > 0 ? 'CONTINUE' : 'NEW RUN', 'primary');
+  drawButton(buttons.titlePlay, run.wave > 0 ? 'CONTINUE' : 'PLAY', 'primary');
   drawButton(buttons.titleRuns);
   if (installPrompt) drawButton(buttons.titleInstall, 'INSTALL APP', 'good');
   centeredText('IF ONE ZOMBIE GETS THROUGH, IT IS OVER', UH - BAR_H + 16, PAL.s);

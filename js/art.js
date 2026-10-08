@@ -303,6 +303,22 @@ export function dangerRows(seed) {
   return toRows(g);
 }
 
+// A ploughed field: dark soil with lighter ridges, and a dark border where it meets grass.
+export function furrowRows(seed, edges = {}) {
+  const g = grid('D');
+  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+    if (y % 6 === 1 || y % 6 === 2) g[y][x] = 'd';
+    else if (hash(x, y, seed + 90) < 0.04) g[y][x] = 'N';
+  }
+  for (let i = 0; i < SIZE; i++) {
+    if (edges.n) g[0][i] = 'N';
+    if (edges.s) g[SIZE - 1][i] = 'N';
+    if (edges.w) g[i][0] = 'N';
+    if (edges.e) g[i][SIZE - 1] = 'N';
+  }
+  return toRows(g);
+}
+
 // A bare dead tree for the danger zone.
 export function deadTreeRows() {
   const g = grid();

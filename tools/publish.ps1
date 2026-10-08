@@ -55,16 +55,34 @@ try {
   Pop-Location
 }
 
-# Turn on GitHub Pages the first time (serving the gh-pages branch).
+# GitHub Pages must serve the gh-pages branch this script builds (not `main`: that copy has no version.json
+# and an unstamped sw.js, so phones would never see another update). Turn Pages on the first time, and put
+# the source back if it was changed in the repo settings.
 $slug = (gh repo view --json nameWithOwner -q .nameWithOwner).Trim()
-gh api "repos/$slug/pages" --silent 2>$null
+$source = (gh api "repos/$slug/pages" --jq .source.branch 2>$null)
 if ($LASTEXITCODE -ne 0) {
   gh api -X POST "repos/$slug/pages" -f 'source[branch]=gh-pages' -f 'source[path]=/' --silent
   Write-Host 'GitHub Pages turned on.'
+} elseif ($source.Trim() -ne 'gh-pages') {
+  gh api -X PUT "repos/$slug/pages" -f 'source[branch]=gh-pages' -f 'source[path]=/' --silent
+  Write-Host "GitHub Pages source was '$($source.Trim())': set back to gh-pages."
 }
 
 $owner, $name = $slug.Split('/')
+$live = "https://$($owner.ToLower()).github.io/$name/"
 Write-Host ''
-Write-Host "Live:    https://$($owner.ToLower()).github.io/$name/"
-if ($Preview -ne 'main') { Write-Host "Preview: https://$($owner.ToLower()).github.io/$name/preview/" }
-Write-Host '(GitHub can take a minute or two to update the site.)'
+Write-Host "Live:    $live"
+if ($Preview -ne 'main') { Write-Host "Preview: ${live}preview/" }
+
+# Wait for the site to serve this build, and say loudly if it doesn't (phones update only when sw.js changes).
+$sha = (git -C $repo rev-parse --short main).Trim()
+$ok = $false
+for ($i = 0; $i -lt 40 -and -not $ok; $i++) {
+  Start-Sleep 6
+  try {
+    $sw = (Invoke-WebRequest -UseBasicParsing "${live}sw.js?check=$i" -Headers @{ 'Cache-Control' = 'no-cache' }).Content
+    $ok = $sw -like "*const VERSION = '$sha';*"
+  } catch { }
+}
+if ($ok) { Write-Host "The site is serving build $sha." }
+else { Write-Warning "The site is NOT serving build $sha yet (sw.js still has another version). Check the Pages settings: Source must be 'gh-pages'." }

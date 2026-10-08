@@ -299,3 +299,22 @@ What was built:
   - The camera can't pan or zoom past those edges (`clampCam`, `minZ`).
   - A second river crosses the middle of your land (plot rows 10-11), with a bridge on the path.
   - The path is straight from the forest down. The old ponds are gone.
+
+## v2.1 (2026-10-07): the review pass
+What changed after the 109-agent review (details in HANDOFF.md section 0b):
+- **Towers shoot on their own.** The Archer role is gone; the Tavern hires Builders, Guards and Gunners only. The
+  Blacksmith's tower kit says "SHOOTS ANY ZOMBIE IN RANGE". Where this file says "manned archer towers", read "towers".
+- **Pace.** Zombie speeds are 29/52/21/16 px/s (zombie/runner/brute/king), the King has 400 hp and pays 100 gold. Zombie
+  hp scales by `(1 + 0.25(w-1)) * 1.06^(w-1)`: x5.5 at wave 10, x17 at 20, x45 at 30. Gold scales linearly
+  (`1 + 0.22(w-1)`), so the first ten waves pay for the base and after that every wave is a bigger ask. A tower kit is
+  200 gold; upgrades cost 50..2500 and each level is x1.45 damage. Upgrades are instant; there is no game clock.
+  Quiet stretches of a wave fast-forward at 3x on their own, and your chosen speed stays until you change it.
+- **The village is a village.** A market square around the well (General Store, Pet Shop, Blacksmith and Tavern on its
+  north edge, two stalls, a cart, benches, lamps), a duck pond beside the Tavern, two lanes of fenced cottages with
+  flower gardens and washing lines, the Chapel in a churchyard with gravestones and yews, a civic square around the
+  Town Hall at the end of the street, a wheat field with a scarecrow in the south-west, an orchard in the south-east,
+  and a dock with a boat on the ocean. Townsfolk wander the squares and lanes.
+- **The path** is drawn only through the forest and at the bridge approach; across your land the ground is grass
+  (zombies still walk the same columns, and your walls still steer them).
+- **Phones.** The offline cache is versioned per publish, so a new build installs on the next launch and the game
+  reloads itself on the menu; Chrome offers to install the game as an app (INSTALL APP on the title screen).
