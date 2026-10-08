@@ -951,6 +951,7 @@ const battle = new Battle({
   // village entrance.
   walkable: (c, r) => inWorld(c, r) && WALK[r * N + c] === 1,
   goals: () => PATH_COLS.map((c) => ({ c, r: villageGateRow(c) })),
+  wild: (c, r) => !ownsTile(c, r),
   onBreakthrough: (m) => { addPuff(m.x, m.y); showToast('A ZOMBIE GOT INTO THE VILLAGE!'); },
   cave: () => ({ c: CAVE.c, r: CAVE.r }),
   onKill: (m) => {

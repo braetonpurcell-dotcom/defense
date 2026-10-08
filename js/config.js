@@ -206,6 +206,8 @@ export const heroUpgradeCost = (level) => ({ gold: Math.round((100 * 1.75 ** (le
 // point of a building's health rather than smash through it. 0.5 means a full 60-health wall
 // is worth a 30-tile detour; damaged walls become tempting sooner.
 export const DETOUR_PER_HP = 0.5;
+// Zombies hurry down the path until they reach your land (owner: the walk to the base took too long).
+export const WILD_SPEED = 4;
 
 // speed in pixels per second, rate = seconds between attacks.
 // All monsters are zombies (for now).

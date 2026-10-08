@@ -9,7 +9,7 @@
 
 import {
   T, N, NR, MONSTERS, BUILDINGS, CARDS, CARD_POWER, waveList, hpScale, damageScale, sizeOf, towerStats, DETOUR_PER_HP,
-  waveLevel,
+  waveLevel, WILD_SPEED,
 } from './config.js';
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -160,7 +160,8 @@ export class Battle {
       const [d, i] = heap.pop();
       if (d > dist[i]) continue;
       const c = i % N, r = (i - c) / N;
-      const nd = d + enterCost(i);
+      // Rounded to float32 like the stored distances, or "d > dist[i]" would throw away every fractional step.
+      const nd = Math.fround(d + enterCost(i));
       for (const [dc, dr] of DIRS) {
         const nc = c + dc, nr = r + dr;
         if (nc < 0 || nr < 0 || nc >= N || nr >= NR || !this.w.walkable(nc, nr)) continue;
@@ -229,7 +230,9 @@ export class Battle {
         mul = Math.min(mul, 1 - CARDS.tar.slow * CARD_POWER);
       }
     }
-    return m.def.speed * (this.mods.omen.speedMul || 1) * Math.max(0.15, mul);
+    // Off your land (the forest path, plots you haven't bought) they hurry: nobody wants to wait for them.
+    const rush = this.w.wild?.(m.c, m.r) ? WILD_SPEED : 1;
+    return m.def.speed * rush * (this.mods.omen.speedMul || 1) * Math.max(0.15, mul);
   }
 
   updateMonster(m, dt) {
