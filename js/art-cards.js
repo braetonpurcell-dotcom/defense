@@ -76,6 +76,16 @@ function scarecrow(p) {
   p.disc(11.5, 4.5, 4, 'R'); p.put(10, 4, 'k'); p.put(13, 4, 'k'); p.hline(10, 13, 6, 'k'); p.put(11, 0, 'G');
 }
 
+function goldmine(p) {
+  // A rocky mound with a timber-framed mine mouth and gold nuggets spilling out.
+  p.disc(11.5, 15, 10, 'S'); p.disc(11.5, 15, 8.5, 's'); p.rect(1, 15, 22, 22, 'S'); p.rect(3, 15, 20, 21, 's');
+  p.put(6, 9, 'W'); p.put(16, 8, 'W'); p.put(18, 13, 'S'); p.put(5, 14, 'S');
+  p.rect(7, 10, 16, 21, 'k'); p.rect(8, 11, 15, 21, 'm');
+  p.vline(7, 10, 21, 'n'); p.vline(16, 10, 21, 'n'); p.hline(6, 17, 10, 'h'); p.hline(6, 17, 9, 'N');
+  for (const [x, y] of [[9, 19], [12, 20], [14, 18], [10, 21], [18, 20], [4, 21], [13, 21]]) { p.put(x, y, 'y'); p.put(x + 1, y, 'Y'); }
+  p.put(11, 16, 'y'); p.put(12, 13, 'Y');
+}
+
 // Blessing icons (shown on cards, not placed).
 function arrows(p) {
   for (const x of [6, 11, 16]) { p.vline(x, 6, 20, 'n'); p.rect(x - 1, 3, x + 1, 5, 'y'); p.put(x, 2, 'y'); p.put(x - 1, 19, 'w'); p.put(x + 1, 19, 'w'); }
@@ -100,7 +110,7 @@ function secondwind(p) {
 const ART = {
   crossbow: [24, crossbow], cannon: [48, cannon], frost: [24, frost], ballista: [48, ballista],
   lightning: [24, lightning], brazier: [24, brazier], spikes: [24, spikes], bomb: [24, bomb],
-  tar: [24, tar], scarecrow: [24, scarecrow],
+  tar: [24, tar], scarecrow: [24, scarecrow], goldmine: [24, goldmine],
   arrows: [24, arrows], hawkeye: [24, hawkeye], poison: [24, poison], stonemason: [24, stonemason], secondwind: [24, secondwind],
 };
 

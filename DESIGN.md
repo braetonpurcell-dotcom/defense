@@ -318,3 +318,21 @@ What changed after the 109-agent review (details in HANDOFF.md section 0b):
   (zombies still walk the same columns, and your walls still steer them).
 - **Phones.** The offline cache is versioned per publish, so a new build installs on the next launch and the game
   reloads itself on the menu; Chrome offers to install the game as an app (INSTALL APP on the title screen).
+
+## v3 (2026-10-07): zombies hunt your towers
+From the owner's interview answers (`reports/answers.md`; details in HANDOFF.md section 0c).
+- **Zombies hunt your towers.** They come down the forest path as before, then each heads for the nearest standing
+  tower (archer or card tower), the hero's pad or a Gold Mine, by path cost, and smashes it. Walls are only attacked
+  when they're in the way (Clash of Clans style). When nothing is left standing they head for the village, and one
+  zombie in the village still ends the run. Walls now protect your towers.
+- **The hero stands on a 1-tile pad.** Tap the pad to MOVE it (even mid-wave), UPGRADE the hero or change their look.
+  Zombies hunt the pad; it heals over time, and while it's broken the hero is down until the wave ends.
+- **No people, no shops.** Hiring, pets, the General Store, the Blacksmith, the Chapel and the mayor's goals are
+  gone. The village is scenery: the thing you protect. You can't go there.
+- **Cards:** after every wave, 6 cards and you take 2. Skipping a pick pays a quarter of the wave's income. One
+  free reroll a run, then 50G, 75G, ... Wall packs (x8, x15) come up often; the Gold Mine pays every wave it
+  survives and is gone if it breaks.
+- **Repairs** happen between waves only: FIX / REPAIR ALL for gold, or CLEAR rubble for free.
+- **Late waves** bring new zombies: Wall-Breakers (15+, hammer, walk through walls), the Swarm (25+), Tanks (30+).
+  The bottom bar shows what the next wave brings.
+- **TOP RUNS** show waves, kills, gold and the omen.

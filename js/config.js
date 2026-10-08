@@ -63,19 +63,24 @@ export const MAX_LEVEL = 10;
 export const BUILDINGS = {
   wall: { name: 'Wall', hp: 60, repair: 6 },
   tower: { name: 'Archer Tower', hp: 80, repair: 15 },
+  // Your hero's pad: the hero stands on it. Zombies hunt it like a tower; it heals over time (HERO_PAD_HEAL).
+  heropad: { name: 'Hero Pad', hp: 200, repair: 0 },
   tree: { name: 'Tree', hp: 40, repair: 0 },               // grows back for free
-  // Run cards placed on the base (gone when the run ends). hp here is before CARD_POWER.
-  crossbow: { name: 'Crossbow Post', hp: 60, repair: 0, run: true },
-  cannon: { name: 'Cannon Tower', hp: 120, repair: 0, size: 2, run: true },
-  frost: { name: 'Frost Tower', hp: 70, repair: 0, run: true },
-  ballista: { name: 'Ballista', hp: 100, repair: 0, size: 2, run: true },
-  lightning: { name: 'Lightning Rod', hp: 50, repair: 0, run: true },
-  brazier: { name: 'Flame Brazier', hp: 60, repair: 0, run: true },
+  // Run cards placed on the base (gone when the run ends). hp here is before CARD_POWER. Card towers can be
+  // repaired from rubble like archer towers (repair = gold to fix one from nothing).
+  crossbow: { name: 'Crossbow Post', hp: 60, repair: 20, run: true },
+  cannon: { name: 'Cannon Tower', hp: 120, repair: 40, size: 2, run: true },
+  frost: { name: 'Frost Tower', hp: 70, repair: 25, run: true },
+  ballista: { name: 'Ballista', hp: 100, repair: 40, size: 2, run: true },
+  lightning: { name: 'Lightning Rod', hp: 50, repair: 50, run: true },
+  brazier: { name: 'Flame Brazier', hp: 60, repair: 25, run: true },
+  // The Gold Mine pays at the end of every wave it survives. Zombies hunt it; once broken it's gone for good.
+  goldmine: { name: 'Gold Mine', hp: 120, repair: 0, run: true, noRepair: true },
   spikes: { name: 'Spike Pit', hp: 1, repair: 0, run: true, trap: true },
   bomb: { name: 'Bomb', hp: 1, repair: 0, run: true, trap: true },
   tar: { name: 'Tar Pit', hp: 1, repair: 0, run: true, trap: true },
-  scarecrow: { name: 'Scarecrow', hp: 150, repair: 0, run: true },
-  barricade: { name: 'Barricade', hp: 90, repair: 0, run: true },
+  scarecrow: { name: 'Scarecrow', hp: 150, repair: 15, run: true },
+  barricade: { name: 'Barricade', hp: 90, repair: 8, run: true },   // older runs' card walls (no card gives them now)
   // Decorations: no stats, just looks. Fixed for free after a run.
   flowers: { name: 'Flower Bed', hp: 20, repair: 0, decor: true },
   lantern: { name: 'Lanterns', hp: 20, repair: 0, decor: true },
@@ -102,7 +107,7 @@ export const towerStats = (level = 1) => ({
 });
 
 // ---------- No limits ----------
-// v2: there's no House. Nothing caps how many walls, towers or people you have, or how much gold you hold.
+// v2: there's no House. Nothing caps how many walls or towers you have, or how much gold you hold.
 // Gold (from zombies) is the only limit. Things still level up to MAX_LEVEL.
 
 // Cost to build a new one. Gold is the only money: you earn it by killing zombies.
@@ -131,26 +136,37 @@ export const CARD_POWER = 0.8; // playtest: 1.0 made runs far too easy (casual p
 // Common / Rare / Epic odds by wave.
 export const rarityOdds = (wave) => (wave <= 3 ? [75, 22, 3] : wave <= 6 ? [55, 35, 10] : wave <= 9 ? [40, 40, 20] : [25, 45, 30]);
 export const RARITY = ['common', 'rare', 'epic'];
-export const SKIP_GOLD = 15;
+// Six cards are shown after every wave and you take two (PICKS). Each pick you skip pays about a quarter of
+// what the wave just brought in.
+export const CARDS_SHOWN = 6;
+export const PICKS = 2;
+export const skipGold = (wave) => Math.round(0.25 * waveIncome(Math.max(1, wave)));
+// One free reroll a run, then rerolls cost gold, more each time. A reroll redraws all six.
+export const FREE_REROLLS = 1;
+export const rerollPrice = (paidSoFar) => ({ gold: 50 + 25 * paidSoFar });
 
 // Gems: the premium currency for art packs in the store. Earned from runs for now;
 // buying them with real money comes later, once the game is online.
 export const gemsForRun = (wavesSurvived) => 1 + Math.floor(wavesSurvived / 5);
 
-// kind: tower | trap | walls | blessing. Towers: damage, range (tiles), rate (s).
-// lines: what the card says (short, pixel font).
+// kind: tower | trap | walls | mine | blessing. Towers: damage, range (tiles), rate (s).
+// lines: what the card says (short, pixel font). weight: how often it's drawn within its rarity (default 1).
+// (Numbers were cut ~20% when the pick went from 1 of 3 to 2 of 6.)
 export const CARDS = {
-  crossbow: { name: 'Crossbow Post', kind: 'tower', rarity: 'common', size: 1, hp: 60, damage: 6, range: 3.5, rate: 0.35, shot: 'arrow', lines: ['RAPID FIRE', '6 DMG 3.5 RNG'] },
-  cannon: { name: 'Cannon Tower', kind: 'tower', rarity: 'common', size: 2, hp: 120, damage: 22, range: 4.5, rate: 2.0, shot: 'ball', splash: 1.5, lines: ['SPLASH DAMAGE', '22 DMG 2X2'] },
+  crossbow: { name: 'Crossbow Post', kind: 'tower', rarity: 'common', size: 1, hp: 60, damage: 5, range: 3.5, rate: 0.35, shot: 'arrow', lines: ['RAPID FIRE', '5 DMG 3.5 RNG'] },
+  cannon: { name: 'Cannon Tower', kind: 'tower', rarity: 'common', size: 2, hp: 120, damage: 18, range: 4.5, rate: 2.0, shot: 'ball', splash: 1.5, lines: ['SPLASH DAMAGE', '18 DMG 2X2'] },
   frost: { name: 'Frost Tower', kind: 'tower', rarity: 'rare', size: 1, hp: 70, damage: 3, range: 3.5, rate: 0.9, shot: 'ice', slow: 0.6, slowFor: 2, lines: ['SLOWS FOES', 'TO 60% SPEED'] },
-  ballista: { name: 'Ballista', kind: 'tower', rarity: 'rare', size: 2, hp: 100, damage: 22, range: 7, rate: 2.5, shot: 'bolt', pierce: 3, lines: ['LONG RANGE', 'PIERCES 3'] },
-  lightning: { name: 'Lightning Rod', kind: 'tower', rarity: 'epic', size: 1, hp: 50, damage: 30, range: 6, rate: 4, shot: 'zap', chain: 2, chainDamage: 15, lines: ['30 DMG ZAP', 'CHAINS TO 2'] },
+  ballista: { name: 'Ballista', kind: 'tower', rarity: 'rare', size: 2, hp: 100, damage: 18, range: 7, rate: 2.5, shot: 'bolt', pierce: 3, lines: ['LONG RANGE', 'PIERCES 3'] },
+  lightning: { name: 'Lightning Rod', kind: 'tower', rarity: 'epic', size: 1, hp: 50, damage: 24, range: 6, rate: 4, shot: 'zap', chain: 2, chainDamage: 12, lines: ['24 DMG ZAP', 'CHAINS TO 2'] },
   brazier: { name: 'Flame Brazier', kind: 'tower', rarity: 'epic', size: 1, hp: 60, damage: 2, range: 2, rate: 0.25, shot: 'aura', lines: ['BURNS ALL', 'NEARBY'] },
-  spikes: { name: 'Spike Pit', kind: 'trap', rarity: 'common', damage: 15, charges: 8, lines: ['15 DMG ON STEP', '8 USES'] },
-  bomb: { name: 'Bomb', kind: 'trap', rarity: 'common', damage: 60, splash: 2, lines: ['60 DMG BLAST', 'ONE USE'] },
+  spikes: { name: 'Spike Pit', kind: 'trap', rarity: 'common', damage: 12, charges: 8, lines: ['12 DMG ON STEP', '8 USES'] },
+  bomb: { name: 'Bomb', kind: 'trap', rarity: 'common', damage: 48, splash: 2, lines: ['48 DMG BLAST', 'ONE USE'] },
   tar: { name: 'Tar Pit', kind: 'trap', rarity: 'rare', slow: 0.5, lines: ['SLOWS 3X3', 'ALL RUN'] },
   scarecrow: { name: 'Scarecrow', kind: 'trap', rarity: 'rare', hp: 150, decoy: true, lines: ['MONSTERS', 'HIT IT FIRST'] },
-  barricade: { name: 'Barricade', kind: 'walls', rarity: 'common', count: 6, hp: 90, lines: ['6 STRONG WALLS', '90 HP EACH'] },
+  // Wall packs: plain walls into your items (they last the run and upgrade like any wall). Drawn often.
+  walls8: { name: 'Walls X8', kind: 'walls', rarity: 'common', count: 8, weight: 3, lines: ['8 WALLS', 'INTO YOUR ITEMS'] },
+  walls15: { name: 'Walls X15', kind: 'walls', rarity: 'rare', count: 15, weight: 3, lines: ['15 WALLS', 'INTO YOUR ITEMS'] },
+  goldmine: { name: 'Gold Mine', kind: 'mine', rarity: 'rare', size: 1, hp: 120, lines: ['GOLD EVERY WAVE', 'ZOMBIES HUNT IT'] },
   arrows: { name: 'Sharp Arrows', kind: 'blessing', rarity: 'common', stacks: 3, lines: ['TOWERS', '+25% DAMAGE'] },
   hawkeye: { name: 'Hawk Eye', kind: 'blessing', rarity: 'rare', lines: ['TOWERS', '+1 RANGE'] },
   poison: { name: 'Poison Tips', kind: 'blessing', rarity: 'epic', lines: ['HITS POISON', '2 DMG/S 4S'] },
@@ -161,59 +177,16 @@ export const CARDS = {
 // One random twist per run: an upside and a downside.
 export const OMENS = [
   { id: 'bloodmoon', name: 'Blood Moon', good: 'KILL GOLD +50%', bad: 'ZOMBIES +25% HP', hpMul: 1.25, goldMul: 1.5 },
-  { id: 'fog', name: 'Thick Fog', good: 'SEE 4 CARDS', bad: 'TOWER RANGE -0.25', rangeAdd: -0.25, choices: 4 },
+  { id: 'fog', name: 'Thick Fog', good: 'PICK 3 CARDS', bad: 'TOWER RANGE -0.25', rangeAdd: -0.25, picks: 3 },
   { id: 'zombierush', name: 'Runner Rush', good: 'TRAP AND WALL CARDS X2', bad: 'EXTRA RUNNERS FROM WAVE 2', runners: true, pairs: true },
   { id: 'luckystars', name: 'Lucky Stars', good: 'RARER CARDS', bad: 'ZOMBIES 5% FASTER', luck: true, speedMul: 1.05 },
   { id: 'calm', name: 'Calm Skies', good: 'WAVE BONUS +25%', bad: 'NOTHING STRANGE', bonusMul: 1.25 },
 ];
 
-// ---------- The village ----------
-// Pets: one walks with your hero at a time and gives its perk. Never dies.
-export const PETS = {
-  dog: { name: 'Dog', price: { gold: 300 }, perk: 'YOUR HERO WALKS 50% FASTER' },
-  cat: { name: 'Cat', price: { gold: 250 }, perk: 'ZOMBIES DROP +20% GOLD' },
-  owl: { name: 'Owl', price: { gold: 400 }, perk: '+1 CARD REROLL A RUN' },
-};
-
-// Blacksmith: building kits that go straight into your items (place them from the ITEMS bar).
-export const BLACKSMITH_GOODS = [
-  { name: 'WALL BUNDLE X10', type: 'wall', n: 10, price: { gold: 90 }, about: 'TEN WOODEN WALLS' },
-  { name: 'ARCHER TOWER KIT', type: 'tower', n: 1, price: { gold: 200 }, about: 'SHOOTS ANY ZOMBIE IN RANGE' },
-  { name: 'SPIKE PITS X2', type: 'spikes', n: 2, price: { gold: 70 }, about: 'TRAPS FOR THE PATH' },
-  { name: 'BARRICADES X3', type: 'barricade', n: 3, price: { gold: 75 }, about: 'TOUGH WALLS FOR THIS RUN' },
-];
-// Chapel: pray for luck (+1 card reroll this run).
-export const CHAPEL_PRAYER = { gold: 50 };
-
-// General store: run upgrades for gold (the same blessings the cards give; they last this run).
-export const STORE_ITEMS = {
-  arrows: { name: 'Sharp Arrows', price: { gold: 150 }, about: 'TOWERS +25% DAMAGE THIS RUN (MAX 3)', blessing: 'arrows' },
-  hawkeye: { name: 'Hawk Eye', price: { gold: 250 }, about: 'TOWERS +1 RANGE THIS RUN', blessing: 'hawkeye' },
-  stonemason: { name: 'Stonemason', price: { gold: 120 }, about: 'WALLS +50% HP THIS RUN', blessing: 'stonemason' },
-};
-
-// ---------- NPCs: your people, with jobs (you're the director) ----------
-// Hired at the Tavern (in the village). No cap: gold is the only limit.
-// (Archer towers shoot on their own: there is no archer role to hire.)
-export const NPC_ROLES = {
-  builder: { name: 'Builder', price: { gold: 150 }, about: 'FIXES DAMAGED WALLS FOR FREE',
-    look: { skin: '#e8b088', hair: '#ffcd75', shirt: '#ef7d57', pants: '#566c86' } },
-  // Fighters: they go out and fight zombies during a wave. Zombies hit back; a fighter who drops
-  // gets back up when the wave ends.
-  guard: { name: 'Guard', price: { gold: 180 }, about: 'SWORD - HOLDS ZOMBIES BACK UP CLOSE',
-    look: { skin: '#f4c8a0', hair: '#333c57', shirt: '#94b0c2', pants: '#333c57' },
-    fight: { hp: 110, damage: 14, rate: 0.7, range: 1.2, weapon: 'sword' } },
-  gunner: { name: 'Gunner', price: { gold: 250 }, about: 'GUN - SHOOTS FROM BEHIND THE GUARDS',
-    look: { skin: '#c8955a', hair: '#1a1c2c', shirt: '#38b764', pants: '#5a3a1f' },
-    fight: { hp: 60, damage: 11, rate: 0.9, range: 4, weapon: 'gun' } },
-};
-// Fighters get tougher as the waves do (pass waveLevel(wave)), a bit slower than zombies (1.4x per level).
-export const fighterScale = (level) => 1.3 ** (level - 1);
-export const GUARD_RADIUS = 9;   // tiles from the guard point a fighter will go to meet a zombie
-
 // ---------- Your hero: a mobile tower ----------
-// Tap the hero to move them (they stand guard where you send them, even mid-wave), upgrade them or change
-// their look. They shoot any zombie in range. If they drop, they get up when the wave ends.
+// The hero stands on a 1-tile pad. Tap the pad to MOVE it (even mid-wave), UPGRADE the hero or change their
+// look. They shoot any zombie in range. Zombies hunt the pad like a tower: its health is the hero's hp, and it
+// heals over time. If it breaks, the hero is down until the wave ends, then the pad heals back up by itself.
 export const HERO_MAX_LEVEL = 10;
 export const heroStats = (level) => ({
   hp: Math.round(200 * 1.3 ** (level - 1)),
@@ -222,47 +195,13 @@ export const heroStats = (level) => ({
   range: 3.5 + 0.25 * (level - 1),
   weapon: 'bow',
 });
+export const HERO_PAD_HEAL = 0.02; // share of its health the pad heals a second during a wave (10x between waves)
 export const heroUpgradeCost = (level) => ({ gold: Math.round((100 * 1.75 ** (level - 1)) / 10) * 10 }); // level -> level+1
-
-// ---------- Hiring is roguelike ----------
-// The Tavern never has a fixed menu: it shows APPLICANTS random people (role, name, trait, price).
-// The board reshuffles after every wave, or right away for REROLL_PRICE. You work with who turns up.
-export const APPLICANTS = 3;
-export const REROLL_PRICE = { gold: 30 };
-// Every applicant has one trait. Some are good, some are a trade-off.
-//   speed: walking speed x   hp: fighter health x   power: fighter damage / builder repair x
-//   range: tiles added to a gunner   price: hire price x
-//   roles: only these roles can have it (no roles = anyone)
-export const TRAITS = {
-  quick:  { name: 'QUICK',     about: 'WALKS FAST',              speed: 1.35 },
-  tough:  { name: 'TOUGH',     about: 'LOTS OF HEALTH',          hp: 1.5, roles: ['guard', 'gunner'] },
-  strong: { name: 'STRONG',    about: 'HITS AND WORKS HARDER',   power: 1.3 },
-  eagle:  { name: 'EAGLE EYE', about: 'SEES FURTHER (+1 RANGE)', range: 1, roles: ['gunner'] },
-  cheap:  { name: 'CHEAP',     about: 'WORKS FOR LESS',          price: 0.65 },
-  lazy:   { name: 'LAZY',      about: 'SLOW AND WEAK, VERY CHEAP', speed: 0.7, power: 0.8, price: 0.5 },
-  hero:   { name: 'HEROIC',    about: 'GREAT AT EVERYTHING',     speed: 1.2, hp: 1.3, power: 1.25, price: 1.4, roles: ['guard', 'gunner'] },
-};
-export const NPC_NAMES = ['ADA', 'BO', 'CY', 'DOT', 'ED', 'FAY', 'GUS', 'HAL', 'IVY', 'JO', 'KIT', 'LEO', 'MAE',
-  'NED', 'OLA', 'PIP', 'QUIN', 'ROY', 'SAL', 'TEX', 'UMA', 'VIC', 'WES', 'XAN', 'YUL', 'ZED'];
-export const BUILDER_REPAIR_PER_SEC = 12;   // health a builder restores per second while working
-
-// ---------- Director's goals (the story) ----------
-// The early-game to-do list, one at a time, in order (it teaches the game). `check(game)` says when it's done; the reward is paid then.
-export const GOALS = [
-  { id: 'hero', text: 'TAP YOUR HERO AND MOVE THEM', reward: { gold: 50 }, check: (g) => !!g.hero?.post },
-  { id: 'walls', text: 'PLACE THE WALLS FROM YOUR ITEMS', reward: { gold: 50 }, check: (g) => !g.items?.some((i) => i.type === 'wall') },
-  { id: 'builder', text: 'HIRE A BUILDER AT THE VILLAGE TAVERN', reward: { gold: 100 }, check: (g) => g.npcs.some((n) => n.role === 'builder') },
-  { id: 'wave3', text: 'SURVIVE 3 WAVES', reward: { gold: 150 }, check: (g) => (g.stats?.bestWave || 0) >= 3 },
-  { id: 'fighter', text: 'HIRE A GUARD OR GUNNER', reward: { gold: 150 }, check: (g) => g.npcs.some((n) => n.role === 'guard' || n.role === 'gunner') },
-  { id: 'tower3', text: 'BUILD A 3RD ARCHER TOWER', reward: { gold: 200 }, check: (g) => g.buildings.filter((b) => b.type === 'tower' && b.hp > 0).length >= 3 },
-  { id: 'tower3lv', text: 'UPGRADE A TOWER TO LEVEL 3', reward: { gold: 250 }, check: (g) => g.buildings.some((b) => b.type === 'tower' && b.level >= 3) },
-  { id: 'wave7', text: 'SURVIVE 7 WAVES', reward: { gold: 300 }, check: (g) => (g.stats?.bestWave || 0) >= 7 },
-  { id: 'king', text: 'SURVIVE WAVE 10 AND BEAT THE KING', reward: { gold: 500, gems: 5 }, check: (g) => (g.stats?.bestWave || 0) >= 10 },
-  { id: 'wave20', text: 'SURVIVE 20 WAVES', reward: { gold: 1000, gems: 10 }, check: (g) => (g.stats?.bestWave || 0) >= 20 },
-];
 
 // ---------- Monsters ----------
 
+// Zombies hunt your towers: each heads for the nearest standing tower, card tower, hero pad or Gold Mine (by
+// path cost) and smashes it. Only when nothing is left standing do they head down the path to the village.
 // How stubborn monsters are about walking around: they'll walk this many extra tiles per
 // point of a building's health rather than smash through it. 0.5 means a full 60-health wall
 // is worth a 30-tile detour; damaged walls become tempting sooner.
@@ -276,6 +215,11 @@ export const MONSTERS = {
   runner: { name: 'Runner', hp: 14, speed: 52, damage: 3, rate: 0.7, gold: 3 },
   brute: { name: 'Brute', hp: 70, speed: 21, damage: 12, rate: 1.2, gold: 6 },
   king: { name: 'Zombie King', hp: 400, speed: 16, damage: 30, rate: 1.5, gold: 100, big: true },
+  // Late-game types, one every ~10 waves (debut: the first wave they come). Wall-breakers walk straight through
+  // walls (they hardly mind them) and hit walls x4; the swarm is many weak runners; the tank is huge and slow.
+  breaker: { name: 'Wall-Breaker', hp: 60, speed: 24, damage: 10, rate: 1.0, gold: 6, debut: 15, wallMul: 4, breaker: true },
+  swarm: { name: 'Swarm', hp: 8, speed: 58, damage: 2, rate: 0.6, gold: 1, debut: 25 },
+  tank: { name: 'Tank', hp: 600, speed: 12, damage: 20, rate: 1.6, gold: 40, debut: 30, big: true },
 };
 
 // Zombies get tougher each wave: health grows steadily with a curve on top (x5.5 by wave 10, x17 by wave 20,
@@ -290,6 +234,11 @@ export const goldScale = (wave) => 1 + 0.22 * (wave - 1);
 export const killGold = (zombieGold, wave) => Math.round(zombieGold * KILL_GOLD * goldScale(wave));
 // Gold for clearing a wave.
 export const waveBonus = (wave) => Math.round((20 + 6 * wave) * goldScale(wave));
+// What a wave brings in: its clear bonus plus the gold of every zombie in it.
+export const waveIncome = (wave) => waveBonus(wave)
+  + waveList(wave).reduce((sum, s) => sum + killGold(MONSTERS[s.type].gold, wave), 0);
+// A Gold Mine's payout for each wave it survives.
+export const mineGold = (wave) => Math.round(0.5 * waveBonus(wave));
 
 // Who comes out of the cave, in order. gap = seconds until the next one.
 export function waveList(wave, omen = {}) {
@@ -299,6 +248,9 @@ export function waveList(wave, omen = {}) {
   if (omen.runners && wave >= 2) add('runner', Math.ceil(wave * 1.2), 0.6);
   else if (wave >= 3) add('runner', wave, 0.6);
   if (wave >= 5) add('brute', Math.floor((wave - 3) / 2), 2.0);
+  if (wave >= MONSTERS.breaker.debut) add('breaker', Math.floor((wave - MONSTERS.breaker.debut) / 2) + 2, 1.5);
+  if (wave >= MONSTERS.swarm.debut) add('swarm', 3 * (wave - MONSTERS.swarm.debut) + 12, 0.25);
+  if (wave >= MONSTERS.tank.debut) add('tank', Math.floor((wave - MONSTERS.tank.debut) / 3) + 1, 4);
   if (wave % BOSS_EVERY === 0) add('king', wave / BOSS_EVERY, 3);
   return out;
 }

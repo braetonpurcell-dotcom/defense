@@ -42,3 +42,12 @@ export function towerPalette(level) {
   if (level >= 4) return { ...PAL, r: '#3b5dc9', R: '#41a6f6', n: '#94b0c2', N: '#566c86' };
   return PAL;
 }
+
+// The hero's pad (1 tile, flat): a round stone platform with a gold rim and a star in the middle.
+export function padRows() {
+  const p = painter(24, 24);
+  p.disc(11.5, 13, 10.5, 'Y'); p.disc(11.5, 13, 9, 's'); p.disc(11.5, 13, 7, 'S'); p.disc(11.5, 13, 5.5, 's');
+  for (const [x, y] of [[11, 9], [12, 9], [10, 12], [11, 11], [12, 11], [13, 12], [8, 13], [15, 13], [11, 14], [12, 14], [9, 16], [14, 16]]) p.put(x, y, 'y');
+  p.outline();
+  return p.rows();
+}

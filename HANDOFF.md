@@ -4,6 +4,32 @@ Written 2026-10-06 at the end of a long build session, right before the conversa
 Read this top to bottom before touching anything. Where this file and the code disagree, **trust the code**
 and fix this file. Where this file and `DESIGN.md` / `QUESTIONS.md` / `README.md` disagree, this file is newer.
 
+## 0c. LATEST (2026-10-07, branch draft/v3-hunt): zombies hunt your towers - the owner's interview answers
+Built from `reports/answers.md` (the Design Interviewer's log; every entry there is now marked DONE with notes).
+This overrides the NPC, shop, pet and goal parts of the sections below.
+- **Tower hunting** (battle.js `isTarget`, `recomputeFlow`, `flood`): one flow field from every standing target
+  (archer towers, card towers, the hero pad, a Gold Mine, the Scarecrow). Walls are never targets, only obstacles
+  (`DETOUR_PER_HP`). With no target left (`battle.huntingVillage`), the village gate is the goal again; one zombie
+  there still ends the run. Wall-breakers (`MONSTERS.breaker`) get a second field (`distBreaker`) where walls
+  barely count, and hit walls x4.
+- **Hero pad** (`BUILDINGS.heropad`, a building in `game.buildings`): the hero stands on it and shoots from it. Tap it
+  for MOVE / UPGRADE / LOOK (`heroMenu`, `heroOpen`; MOVE works mid-wave, `moveHeroPad`). Its max hp = the hero's hp.
+  It heals over time (`healPad`: `HERO_PAD_HEAL`/s in a wave, 10x between waves, from rubble too); while broken the
+  hero is down. It can't be put away or cleared. Old saves get a pad on the nearest free tile (`upgradeSave`).
+- **Gone:** NPC hiring (Tavern, applicants, traits, builders, guards, gunners), pets, the General Store, the
+  Blacksmith (its spot is a cottage, the Old Smithy), the Chapel prayer, the mayor's goals (`GOALS`), keepers. The
+  village (`LANDMARKS`, `HOMES`, `PROPS`) is scenery; tapping names things. The hero can't go there.
+- **Cards:** 6 shown, take 2 (`CARDS_SHOWN`, `PICKS`, `run.picksLeft`; Thick Fog picks 3). A taken card leaves a
+  TAKEN slot. Skip pays `skipGold(wave)` (25% of `waveIncome`) per pick. Reroll: 1 free a run, then
+  `rerollPrice` 50G +25G each. New cards: Walls X8 / X15 (plain walls into ITEMS, weight 3), Gold Mine (rare;
+  `mineGold` per wave survived, gone when broken). Tower/trap card numbers cut ~20%.
+- **Repairs:** nothing heals in a wave (except the hero pad). Rubble panel: FIX nG or CLEAR (free, `clearRubble`).
+  Card towers now have a repair price.
+- **Late waves:** Wall-Breaker from 15, Swarm from 25, Tank from 30 (`debut`), with a NEW: toast on their first wave.
+  The bottom bar previews the next wave (`wavePreview`).
+- **TOP RUNS** rows: waves, kills, gold, omen.
+- The owner said to stop using the bots (tools/bots.html): test by driving the game through `window.defense`, balance by owner playtests. js/bots.js was only updated to keep compiling.
+
 ## 0b. DONE (2026-10-07): the Fable review pass
 A 109-agent review (8 reviewers + adversarial verifiers; 98 findings confirmed, 3 refuted) drove a fix pass; all of it
 is committed and live. The findings and the village/pace proposals are in the workflow journal under the session's

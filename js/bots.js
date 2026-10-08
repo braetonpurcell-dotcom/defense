@@ -5,7 +5,7 @@
 // Bots differ in how they handle the run cards and how well they look after the base.
 
 const TOWER_FIRST = ['lightning', 'brazier', 'ballista', 'cannon', 'frost', 'crossbow', 'arrows', 'poison', 'hawkeye',
-  'bomb', 'tar', 'scarecrow', 'secondwind', 'spikes', 'stonemason', 'barricade'];
+  'goldmine', 'walls15', 'bomb', 'tar', 'scarecrow', 'secondwind', 'walls8', 'spikes', 'stonemason'];
 
 export const BOTS = {
   none: {
@@ -22,22 +22,21 @@ export const BOTS = {
   },
   medium: {
     name: 'Medium player',
-    about: 'Strongest card. Repairs, upgrades and hires.',
+    about: 'Strongest cards. Repairs and upgrades.',
     pick: (choices) => choices.indexOf([...choices].sort((a, b) => TOWER_FIRST.indexOf(a) - TOWER_FIRST.indexOf(b))[0]),
-    hires: true,
     atHome(d) { d.repairAll(); upgradeBase(d); },
   },
   fast: {
     name: 'Fast player',
-    about: 'Strongest card, rerolls a weak hand, repairs, upgrades, hires and buys land.',
+    about: 'Strongest cards, rerolls a weak hand (while it is free), repairs, upgrades, the hero too, and buys land.',
     pick: (choices, d) => {
       const best = [...choices].sort((a, b) => TOWER_FIRST.indexOf(a) - TOWER_FIRST.indexOf(b))[0];
       if (TOWER_FIRST.indexOf(best) > 8 && d.run.rerolls > 0) return 'reroll';
       return choices.indexOf(best);
     },
-    hires: true,
     atHome(d) {
       d.repairAll();
+      d.upgradeHero();
       upgradeBase(d);
       for (let i = 0; i < 2 && d.buyNextPlot(); i++);
     },
@@ -46,13 +45,6 @@ export const BOTS = {
 
 const yieldFrame = () => new Promise((r) => setTimeout(r, 0));
 
-// Hire whoever on the Tavern board is affordable (fighters and builders first).
-function hire(d) {
-  const order = ['builder', 'guard', 'gunner'];
-  const board = (d.game.applicants || []).map((a, i) => ({ a, i })).filter((x) => x.a)
-    .sort((x, y) => order.indexOf(x.a.role) - order.indexOf(y.a.role));
-  for (const { i } of board) d.hireApplicant(i);
-}
 
 // Spend on upgrades: towers first, then walls (the lowest level first).
 function upgradeBase(d) {
@@ -62,12 +54,14 @@ function upgradeBase(d) {
   if (wall) d.upgradeAllWalls(wall.level);
 }
 
-// Handle the card pick and placement between waves.
+// Handle the card pick (two of six) and placement between waves. Taken cards are null in the hand.
 function handleCards(d, bot) {
-  for (let guard = 0; guard < 5 && d.cardChoices; guard++) {
-    const choice = bot.pick(d.cardChoices, d);
+  for (let guard = 0; guard < 6 && d.cardChoices; guard++) {
+    const hand = d.cardChoices.map((id) => id || '~');
+    const choice = bot.pick(hand.filter((id) => id !== '~'), d);
+    if (choice !== 'reroll' && choice >= 0) { d.pickCard(hand.indexOf(hand.filter((id) => id !== '~')[choice])); continue; }
     if (choice === 'reroll') { d.rerollCards(); continue; }
-    if (choice < 0) d.skipCard(); else d.pickCard(choice);
+    if (choice < 0) d.skipCard();
   }
   for (let guard = 0; guard < 10 && d.autoPlace(); guard++); // put every picked card somewhere sensible
 }
@@ -85,7 +79,7 @@ export async function playSeasons(d, bot, lives, onSeason) {
         // Between waves: pick the card, look after the base, then start the next wave.
         handleCards(d, bot);
         homeSecs++;
-        if (homeSecs === 5) { bot.atHome(d, life); if (bot.hires) hire(d); }
+        if (homeSecs === 5) bot.atHome(d, life);
         if (homeSecs >= 20) { homeSecs = 0; d.nextWave(); }
       }
       d.step(1);
@@ -99,7 +93,7 @@ export async function playSeasons(d, bot, lives, onSeason) {
       earned: d.run.earned,
       gold: d.game.gold,
       land: d.game.owned.length,
-      towers: d.game.buildings.filter((b) => b.type === 'tower').length,
+      towers: d.game.buildings.filter((b) => b.type === 'tower' && b.hp > 0).length,
       minutes: Math.round(secs / 60),
     };
     rows.push(row);

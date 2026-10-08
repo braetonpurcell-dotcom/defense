@@ -1,10 +1,10 @@
 import {
-  SPRITES, PAL, PAL_RUNNER, PAL_BRUTE, PAL_KING, PAL_FLASH,
+  SPRITES, PAL, PAL_RUNNER, PAL_BRUTE, PAL_KING, PAL_BREAKER, PAL_SWARM, PAL_TANK, PAL_FLASH,
   grassRows, dirtRows, furrowRows, waterRows, treeRows, shadowRows, hash,
   mountainRows, peakRows, oceanRows, dangerRows, deadTreeRows, meadowRows, bridgeRows,
 } from './art.js';
 import { wallRows, WALL_N, WALL_E, WALL_S, WALL_W } from './art-walls.js';
-import { towerPalette, towerRows, TOWER_H } from './art-buildings.js';
+import { towerPalette, towerRows, TOWER_H, padRows } from './art-buildings.js';
 import { THEMES, themeById, themePalette, decorRows } from './art-decor.js';
 import { hasCardArt, cardRows } from './art-cards.js';
 import { heroRows, heroPalette, HERO_DEFAULT, LOOK_PARTS } from './art-hero.js';
@@ -12,10 +12,10 @@ import { rowsToCanvas, drawText, textWidth } from './gfx.js';
 import {
   T, CHUNK, CHUNKS, N, NR, WORLD, WORLD_H, WORLD_MAP, LAND0, LAND1, MAP_P0, MAP_P1, START_GOLD, landPrice, BOSS_EVERY, TOP_RUNS, BUILDINGS, waveBonus, killGold, sizeOf,
   hpFor, towerStats, upgradeCost, BUILD_COST,
-  MAX_LEVEL, DECOR, CARDS, RARITY, rarityOdds, SKIP_GOLD, OMENS, gemsForRun,
-  PETS, STORE_ITEMS, BLACKSMITH_GOODS, CHAPEL_PRAYER, NPC_ROLES, BUILDER_REPAIR_PER_SEC, GOALS, HERO_MAX_LEVEL, heroStats, heroUpgradeCost, fighterScale, waveLevel, GUARD_RADIUS, APPLICANTS, REROLL_PRICE, TRAITS, NPC_NAMES,
+  MAX_LEVEL, DECOR, CARDS, RARITY, rarityOdds, OMENS, gemsForRun, CARDS_SHOWN, PICKS, skipGold, FREE_REROLLS, rerollPrice,
+  HERO_MAX_LEVEL, heroStats, heroUpgradeCost, HERO_PAD_HEAL, MONSTERS, waveList, mineGold,
 } from './config.js';
-import { villageRows, wellRows, petRows } from './art-village.js';
+import { villageRows, wellRows } from './art-village.js';
 import {
   RES, countOf, canAfford, missing, formatCost, earn, buildBlock, build, upgradeBlock, upgrade,
 } from './economy.js';
@@ -82,30 +82,34 @@ const nextToWater = (c, r, size = 1) => {
 const chunkKey = (cx, cy) => `${cx},${cy}`;
 const chunkOfTile = (c, r) => [Math.floor(c / CHUNK), Math.floor(r / CHUNK)];
 
-// The guard point: the middle of your starting land, on the path just above the bridge. Fighters meet zombies
-// within GUARD_RADIUS of it, new hires walk here, and the hero stands guard here until you move them.
+// The guard point: the middle of your starting land, on the path just above the bridge. Repairs and upgrades
+// start nearest it, and the camera's home view centres on it.
 const GUARD_POINT = { c: O + 23, r: START_TOP + 7 };
 
-// Starting layout: an archer tower two tiles off each side of the path (so both cover both path columns). You
-// also start with walls in your items (see newGame) to design the first defense yourself.
+// Where the hero's pad starts: beside the path, so the hero shoots from the start without blocking it.
+const HERO_START = { c: GUARD_POINT.c - 1, r: GUARD_POINT.r };
+// Starting layout: an archer tower two tiles off each side of the path (so both cover both path columns), and
+// the hero's pad. You also start with walls in your items (see newGame) to design the first defense yourself.
 const DEFAULT_BUILDINGS = [
   { type: 'tower', c: O + 21, r: START_TOP + 4 },
   { type: 'tower', c: O + 26, r: START_TOP + 4 },
+  { type: 'heropad', c: HERO_START.c, r: HERO_START.r },
 ];
-// Where the hero stands until you move them: beside the path, so they shoot from the start without blocking it.
-const HERO_START = { c: GUARD_POINT.c - 1, r: GUARD_POINT.r };
 const START_ITEMS = [{ type: 'wall', level: 1, n: 12 }];
 // The current run (roguelike layer). Lives only in memory: it is never saved.
 const run = {
   wave: 0, earned: 0, won: false,
-  omen: OMENS[OMENS.length - 1], blessings: {}, rerolls: 1,
-  choices: null,   // card ids on offer, or null
+  omen: OMENS[OMENS.length - 1], blessings: {}, rerolls: FREE_REROLLS, paidRerolls: 0,
+  choices: null,   // card ids on offer (null where one was taken), or null when the pick is done
+  picksLeft: 0,    // how many of the cards on offer you can still take
   pending: null,   // { type, left }: a picked card still to be placed
 };
 
 // Stonemason (a run blessing) makes walls 50% tougher for the rest of the run.
 const isWallType = (t) => t === 'wall' || t === 'barricade';
-const maxHp = (b) => Math.round(hpFor(b.type, b.level || 1) * (isWallType(b.type) && run?.blessings?.stonemason ? 1.5 : 1));
+// The hero's pad has the hero's health.
+const maxHp = (b) => (b.type === 'heropad' ? heroStats(game.hero.level).hp
+  : Math.round(hpFor(b.type, b.level || 1) * (isWallType(b.type) && run?.blessings?.stonemason ? 1.5 : 1)));
 const isRunObject = (b) => !!BUILDINGS[b.type].run;
 
 // ---------- Save ----------
@@ -133,13 +137,11 @@ function newGame() {
 // Fill in anything a save is missing.
 function upgradeSave(s) {
   s.buildings = s.buildings.filter((b) => BUILDINGS[b.type]);
-  if (Array.isArray(s.npcs)) s.npcs = s.npcs.filter((n) => NPC_ROLES[n.role]);
-  delete s.builder; delete s.clock; // older saves had an upgrade timer and a game clock
+  // Gone from the game: hired people, the Tavern board, pets, the mayor's goals, the upgrade timer and clock.
+  for (const k of ['npcs', 'nextNpc', 'applicants', 'pets', 'goalsDone', 'goal', 'builder', 'clock']) delete s[k];
   s.theme ??= 'classic';
   s.gems ??= 0;
   s.look ??= { ...HERO_DEFAULT };
-  s.pets ??= { owned: [], active: null };
-  delete s.pets.fedAt; // pets don't need feeding any more
   s.ownedThemes ??= ['classic'];
   if (!s.ownedThemes.includes(s.theme)) s.theme = 'classic'; // art packs must be owned
   s.nextId ??= 1;
@@ -149,17 +151,21 @@ function upgradeSave(s) {
     if (typeof b.hp !== 'number') b.hp = hpFor(b.type, b.level);
     if (b.type === 'tree' || BUILDINGS[b.type].decor) b.hp = hpFor(b.type, b.level); // safety net
   }
-  // Your people. A new life starts with nobody: you hire at the Tavern.
-  s.nextNpc ??= 1;
-  s.npcs ??= [];
-  for (const n of s.npcs) n.name ??= NPC_NAMES[(n.id * 7) % NPC_NAMES.length];
-  // A saved Tavern board may list a role or trait that no longer exists: those spots empty out.
-  if (Array.isArray(s.applicants)) s.applicants = s.applicants.map((a) => (a && NPC_ROLES[a.role] && TRAITS[a.trait] ? a : null));
   s.stats ??= { bestWave: 0 };
-  // Goals done so far (older saves counted them in order).
-  s.goalsDone ??= GOALS.slice(0, s.goal || 0).map((g) => g.id);
-  delete s.goal;
-  s.hero ??= { level: 1, post: null }; // your hero (a mobile tower)
+  s.hero ??= { level: 1 }; // your hero (a mobile tower, standing on their pad)
+  // Older saves had no pad: put one where the hero stood (or the start spot), on the nearest free tile of your land.
+  if (!s.buildings.some((b) => b.type === 'heropad')) {
+    const want = s.hero.post || HERO_START;
+    const own = new Set(s.owned);
+    const free = (c, r) => own.has(chunkKey(...chunkOfTile(c, r))) && !isWet(c, r)
+      && !s.buildings.some((b) => c >= b.c && r >= b.r && c < b.c + sizeOf(b) && r < b.r + sizeOf(b));
+    let spot = null;
+    for (let d = 0; d < 12 && !spot; d++) {
+      for (let r = want.r - d; r <= want.r + d && !spot; r++) for (let c = want.c - d; c <= want.c + d && !spot; c++) if (free(c, r)) spot = { c, r };
+    }
+    if (spot) s.buildings.push({ id: s.nextId++, type: 'heropad', c: spot.c, r: spot.r, level: 1, hp: heroStats(s.hero.level).hp });
+  }
+  delete s.hero.post;
   s.items ??= []; // your inventory: cards and buildings not on the map ({ type, level, n })
   s.runState ??= null; // the current run (saved, so you can close the app between waves)
   // Records outlive every death: lives played and your top runs (shown on the home screen).
@@ -310,17 +316,17 @@ const isLane = (c, r) => LANES.some((l) => r === l.r && c >= l.c0 && c <= l.c1);
 const isPlaza = (c, r) => inBox(PLAZA, c, r) || inBox(CIVIC, c, r) || isLane(c, r);
 const isField = (c, r) => inBox(FIELD, c, r);
 const inVillage = (c, r) => ground(c, r) === 'open';
-// Buildings you can go into (w×h tiles; their pictures can stand taller than their footprint). The keeper
-// stands beside the door, which is on the bottom edge, so every one of these fronts a square or a lane.
-const SHOPS = [
+// The village is scenery: the thing you're protecting. Nothing in it can be used and you can't go there; these
+// are its big buildings (w×h tiles; their pictures can stand taller than their footprint, doors on the bottom).
+const LANDMARKS = [
   { id: 'store', name: 'General Store', c: 65, r: 108 },             // north edge of the market square...
   { id: 'petshop', name: 'Pet Shop', c: 68, r: 108 },
-  { id: 'blacksmith', name: 'Blacksmith', c: 74, r: 108 },           // ...east of the street: first past the bridge
+  { id: 'cottage', name: 'Old Smithy', v: 10, c: 74, r: 108 },       // ...east of the street: first past the bridge
   { id: 'tavern', name: 'Tavern', c: 77, r: 108 },                   // next to the duck pond
   { id: 'chapel', name: 'Chapel', c: 82, r: 115 },                   // in its churchyard, gate onto Lane A
   { id: 'townhall', name: 'Town Hall', c: 70, r: 127, w: 3, h: 3 }, // in the civic square
 ];
-for (const s of SHOPS) { s.w ??= 2; s.h ??= 2; s.door = { c: s.c + Math.floor(s.w / 2), r: s.r + s.h }; }
+for (const s of LANDMARKS) { s.w ??= 2; s.h ??= 2; }
 const WELL = { c: 71, r: 112 };
 // The families you're protecting: five cottages on each lane, each with a fenced front garden.
 const FAMILIES = ['MILLER', 'BAKER', 'FLETCHER', 'COOPER', 'THATCHER', 'POTTER', 'WEAVER', 'TANNER', 'MASON', 'CARTER'];
@@ -378,13 +384,12 @@ const PROPS = [
   { id: 'dock', c: 93, r: 112, w: 4, h: 1 }, { id: 'boat', c: 95, r: 114, w: 2, h: 1 },
 ].map((p) => ({ w: 1, h: 1, ...p }));
 const covering = (list, c, r) => list.find((s) => c >= s.c && c < s.c + s.w && r >= s.r && r < s.r + s.h);
-const shopAt = (c, r) => covering(SHOPS, c, r);
+const landmarkAt = (c, r) => covering(LANDMARKS, c, r);
 const homeAt = (c, r) => covering(HOMES, c, r);
-// Tiles nobody walks through: buildings, homes, props, the well, and the keeper beside each door.
+// Tiles the townsfolk don't walk through: buildings, homes, props and the well.
 const BLOCKED = new Set();
-for (const s of [...SHOPS, ...HOMES, ...PROPS]) for (let r = s.r; r < s.r + s.h; r++) for (let c = s.c; c < s.c + s.w; c++) BLOCKED.add(r * N + c);
+for (const s of [...LANDMARKS, ...HOMES, ...PROPS]) for (let r = s.r; r < s.r + s.h; r++) for (let c = s.c; c < s.c + s.w; c++) BLOCKED.add(r * N + c);
 BLOCKED.add(WELL.r * N + WELL.c);
-for (const s of SHOPS) BLOCKED.add((s.r + s.h) * N + s.c);
 const villageBlocked = (c, r) => BLOCKED.has(r * N + c);
 // Flat props get no shadow under them.
 const FLAT_PROPS = new Set(['lamp', 'fence', 'flowerbed', 'crop', 'gravestone', 'duck', 'dock', 'boat', 'hay', 'bench']);
@@ -424,6 +429,9 @@ const img = {
   runner: sprite('zombie', PAL_RUNNER),
   brute: sprite('zombie', PAL_BRUTE),
   king: sprite('zombie', PAL_KING),
+  breaker: sprite('zombie', PAL_BREAKER),
+  swarm: sprite('zombie', PAL_SWARM),
+  tank: sprite('zombie', PAL_TANK),
 };
 // White versions for the hit flash.
 const flashImg = {
@@ -432,6 +440,9 @@ const flashImg = {
   runner: sprite('zombie', PAL_FLASH),
   brute: sprite('zombie', PAL_FLASH),
   king: sprite('zombie', PAL_FLASH),
+  breaker: sprite('zombie', PAL_FLASH),
+  swarm: sprite('zombie', PAL_FLASH),
+  tank: sprite('zombie', PAL_FLASH),
 };
 
 // Building art can depend on level, the base theme, and (for walls) which neighbours are walls.
@@ -606,20 +617,10 @@ function drawTerrain(s, ox, oy) {
 }
 buildTerrain();
 
-// ---------- Villagers (your NPCs) ----------
-// One body on the map per NPC in game.npcs (see "NPCs: your people" below for what they do).
-let villagers = [];
-
-// Villagers walk tile by tile on your land, around buildings (rubble is walkable).
-const villagerCanStand = (c, r) => {
-  if (!inWorld(c, r) || !ownsTile(c, r) || isWet(c, r)) return false;
-  const b = buildingAt(c, r);
-  return !b || b.hp <= 0;
-};
-
-// Breadth-first search over walkable tiles. Returns the path to the first tile `isGoal` accepts
+// ---------- Walking (the townsfolk) ----------
+// Breadth-first search over the tiles canStand allows. Returns the path to the first tile `isGoal` accepts
 // (or, with pickRandom, to a random reachable tile within maxSteps).
-function findPath(v, isGoal, maxSteps, pickRandom, canStand = villagerCanStand) {
+function findPath(v, isGoal, maxSteps, pickRandom, canStand) {
   const start = { c: Math.round(v.x / T), r: Math.round(v.y / T) };
   const prev = new Map([[`${start.c},${start.r}`, null]]);
   const queue = [{ ...start, d: 0 }];
@@ -647,63 +648,15 @@ function findPath(v, isGoal, maxSteps, pickRandom, canStand = villagerCanStand) 
   return path;
 }
 
-// ---------- The hero and your people: where they can stand ----------
-// Your land (around buildings), the zombie path (but not zombie country), the bridges, and the village's streets
-// and open ground (not through its buildings, stalls or fences).
-const canStandAt = (c, r) => villagerCanStand(c, r)
-  || (inWorld(c, r) && r >= DANGER_BOTTOM && (isRoad(c, r) || isBridge(c, r)
-    || ((isTrail(c, r) || isPlaza(c, r) || inVillage(c, r)) && !isWet(c, r) && !villageBlocked(c, r) && !meadowTree(c, r))));
-const heroCanStand = canStandAt;
-
-const hero = {
-  isHero: true, x: HERO_START.c * T, y: HERO_START.r * T, path: null, wait: 0, t: 0, dir: 'down', moving: false,
-};
+// ---------- Your hero ----------
+// The hero stands on their pad (a building, so zombies hunt it like a tower). Tap the pad for MOVE / UPGRADE / LOOK.
+const hero = { isHero: true, x: HERO_START.c * T, y: HERO_START.r * T, t: 0, dir: 'down', down: false };
 const heroArt = new Map();
 const heroImg = (dir, frame) => personImg(game.look, dir, frame);
-
-// You're the director: you tap things to use them. Your people do the walking: a builder has to stand next to
-// what they're fixing (REACH tiles away at most).
-const REACH = 1;
-// Is a footprint (c, r, size) within reach of someone standing on (hc, hr)?
-const reachesFrom = (hc, hr, c, r, s) => hc >= c - REACH && hc <= c + s - 1 + REACH && hr >= r - REACH && hr <= r + s - 1 + REACH;
-
-// ---------- Pets ----------
-// One pet walks with your hero. Its perk is on while it's the one with you.
-const pet = { x: hero.x, y: hero.y, t: 0 };
-const petPerk = (type) => game.pets.active === type;
-const petArt = new Map();
-function petImg(type, frame) {
-  const key = `${type}:${frame}`;
-  if (!petArt.has(key)) petArt.set(key, rowsToCanvas(petRows(type, frame)));
-  return petArt.get(key);
-}
-
-function updatePet(dt) {
-  pet.t += dt;
-  if (!game.pets.active) return;
-  // Trot along a step behind you.
-  const back = { down: [0, -14], up: [0, 14], left: [14, 0], right: [-14, 0] }[hero.dir];
-  const tx = hero.x + back[0], ty = hero.y + back[1];
-  const dx = tx - pet.x, dy = ty - pet.y, d = Math.hypot(dx, dy);
-  pet.moving = d > 2;
-  if (d > 200) { pet.x = tx; pet.y = ty; return; } // teleport if left far behind
-  const k = Math.min(1, dt * 5);
-  pet.x += dx * k;
-  pet.y += dy * k;
-}
-
+const heroPad = () => game.buildings.find((b) => b.type === 'heropad');
+const padImg = rowsToCanvas(padRows());
 // ---------- Village folk ----------
 const inVillageFree = (c, r) => inVillage(c, r) && !villageBlocked(c, r);
-const KEEPER_LOOKS = {
-  petshop: { skin: '#f4c8a0', hair: '#f4f4f4', shirt: '#ef7d57', pants: '#5a3a1f' },
-  store: { skin: '#c8955a', hair: '#1a1c2c', shirt: '#b13e53', pants: '#333c57' },
-  tavern: { skin: '#f4c8a0', hair: '#8b5a2b', shirt: '#7a2f8f', pants: '#29366f' },
-  blacksmith: { skin: '#8d6a3a', hair: '#1a1c2c', shirt: '#333c57', pants: '#5a3a1f' },  // the smith
-  chapel: { skin: '#f4c8a0', hair: '#94b0c2', shirt: '#f4f4f4', pants: '#f4f4f4' },      // the priest
-  townhall: { skin: '#e8b088', hair: '#c8c8d0', shirt: '#29366f', pants: '#1a1c2c' },    // the mayor
-};
-const SHOPKEEPERS = SHOPS.map((s) => ({ shop: s, c: s.c, r: s.r + s.h, look: KEEPER_LOOKS[s.id] }));
-const shopkeeperAt = (c, r) => SHOPKEEPERS.find((k) => k.c === c && k.r === r);
 // Townsfolk: everyday villagers going about their day (they hurry indoors when a wave starts).
 const TOWNSFOLK_LOOKS = Array.from({ length: 10 }, (_, i) => {
   const pickPart = (k, salt) => LOOK_PARTS[k].options[(i * salt + k) % LOOK_PARTS[k].options.length];
@@ -712,7 +665,7 @@ const TOWNSFOLK_LOOKS = Array.from({ length: 10 }, (_, i) => {
 const townsfolk = TOWNSFOLK_LOOKS.map((look, i) => ({
   look, x: (PLAZA.c0 + 1 + (i % 5) * 2) * T, y: (PLAZA.r0 + 1 + Math.floor(i / 5) * 2) * T, path: null, wait: 1 + i * 0.4,
   t: Math.random() * 5, dir: 'down',
-  canStand: (c, r) => inVillageFree(c, r) && !shopkeeperAt(c, r),
+  canStand: inVillageFree,
 }));
 const villageArt = new Map();
 function villageImg(id, v = 0) {
@@ -744,173 +697,51 @@ function panKeys() {
   clampCam();
 }
 
+// Townsfolk stroll a few tiles at a time, with a rest in between.
 function pickTarget(v) {
-  if (v.job || (isFighter(v) && battle.active)) { v.wait = 0.3; return; } // busy: no wandering
-  const path = findPath(v, null, 10, true, v.canStand || villagerCanStand);
+  const path = findPath(v, null, 10, true, v.canStand);
   if (!path) { v.wait = 2; return; }
   v.path = path;
 }
 
-function updateVillager(v, dt) {
-  if (v.down) return;
+function updateTownsfolk(v, dt) {
   v.t += dt;
   v.moving = false;
-  if (v.wait > 0) { v.wait -= dt; if (v.wait <= 0 && !v.isHero) pickTarget(v); return; }
+  if (v.wait > 0) { v.wait -= dt; if (v.wait <= 0) pickTarget(v); return; }
   const next = v.path?.[0];
-  if (!next) {
-    if (!v.isHero) v.wait = 1 + Math.random() * 3;
-    return;
-  }
-  // If something was built in the way, stop and plan again.
-  if (!(v.canStand || villagerCanStand)(next.c, next.r)) { v.path = null; v.wait = v.isHero ? 0 : 0.5; return; }
+  if (!next) { v.wait = 1 + Math.random() * 3; return; }
+  if (!v.canStand(next.c, next.r)) { v.path = null; v.wait = 0.5; return; }
   const tx = next.c * T, ty = next.r * T;
   const dx = tx - v.x, dy = ty - v.y;
   const d = Math.hypot(dx, dy);
-  if (d > 0.5) v.dir =Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
-  // Wandering villagers stroll; people heading to a job (or a fight) hurry.
-  const onDuty = v.job || v.foe;
-  const step = (v.isHero ? 48 * (petPerk('dog') ? 1.5 : 1) : v.foe ? 40 : onDuty ? 34 : 14) * (v.npc ? traitOf(v.npc).speed || 1 : 1) * dt;
+  if (d > 0.5) v.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  const step = 14 * dt;
   v.moving = true;
   if (d <= step) {
     v.x = tx; v.y = ty;
     v.path.shift();
-    if (!v.path.length && !v.isHero) v.wait = 1 + Math.random() * 3;
+    if (!v.path.length) v.wait = 1 + Math.random() * 3;
     return;
   }
   v.x += (dx / d) * step;
   v.y += (dy / d) * step;
 }
 
-// ---------- NPCs: your people ----------
-// You're the director: hire people at the Tavern and they get on with their jobs by themselves.
-//   Builder: walks to damaged walls and towers and fixes them for free (even mid-wave).
-//   Guard / Gunner: fight zombies that come near the guard point (see Fighters below).
-const npcCanStand = canStandAt;
-
-function npcLook(n) {
-  const skins = LOOK_PARTS[0].options;
-  return { ...NPC_ROLES[n.role].look, skin: skins[(n.id * 3) % skins.length] };
-}
-
-function makeBody(n, at) {
-  const pos = at || GUARD_POINT;
-  return {
-    npc: n, npcId: n.id, look: npcLook(n), x: pos.c * T, y: pos.r * T, path: null, wait: 0.3 + Math.random(),
-    t: Math.random() * 5, dir: 'down', moving: false, job: null,
-    scan: Math.random(), canStand: npcCanStand,
-  };
-}
-
-// Keep one body per NPC (new hires get a body; bodies of NPCs that no longer exist go).
-function syncNpcBodies(spawnAt) {
-  const byId = new Map(villagers.map((v) => [v.npcId, v]));
-  villagers = game.npcs.map((n) => {
-    const v = byId.get(n.id);
-    if (v) { v.npc = n; return v; }
-    return makeBody(n, spawnAt);
-  });
-}
-
-const vTile = (v) => ({ c: Math.round(v.x / T), r: Math.round(v.y / T) });
-const npcInReach = (v, b, size = sizeOf(b)) => { const t = vTile(v); return reachesFrom(t.c, t.r, b.c, b.r, size); };
-// Path to a spot within reach of building b (never standing on it).
-const pathToReach = (v, b, maxSteps = 200) => findPath(v, (c, r) => !covers(b, c, r) && reachesFrom(c, r, b.c, b.r, sizeOf(b)), maxSteps, false, v.canStand);
-// Path back to the guard point (fighters going home).
-const pathToGuard = (v) => findPath(v, (c, r) => Math.abs(c - GUARD_POINT.c) <= 2 && Math.abs(r - GUARD_POINT.r) <= 2, 400, false, v.canStand);
-const faceTowards = (v, b) => {
-  const t = vTile(v);
-  v.dir = t.r < b.r ? 'down' : t.r >= b.r + sizeOf(b) ? 'up' : t.c < b.c ? 'right' : 'left';
-};
-
-// ---------- Fighters ----------
-// Guards (swords) and gunners (guns) stay outside when a wave starts and go to meet any zombie that
-// gets within GUARD_RADIUS of the guard point. Zombies stop to fight them. A fighter who drops lies there
-// until the wave is over, then gets back up with full health.
-const isFighter = (v) => !!NPC_ROLES[v.npc?.role]?.fight;
-const fightOf = (v) => NPC_ROLES[v.npc.role].fight;
-const fighterMaxHp = (v) => Math.round(fightOf(v).hp * fighterScale(waveLevel(Math.max(1, run.wave))) * (traitOf(v.npc).hp || 1));
-function healFighter(v) { v.down = false; v.hp = fighterMaxHp(v); v.foe = null; v.cd = 0; }
-
-function fighterThink(v, dt) {
-  if (v.hp === undefined) healFighter(v);
-  v.flash = Math.max(0, (v.flash || 0) - dt);
-  v.swing = Math.max(0, (v.swing || 0) - dt);
-  if (v.down) v.t += dt; // keeps the "down" marker blinking
-  if (v.down) { if (!battle.active) healFighter(v); return; }
-  // Fighters live at the guard point: if they're far from it (just hired, say), they walk back.
-  const home = { x: (GUARD_POINT.c + 0.5) * T, y: (GUARD_POINT.r + 0.5) * T };
-  const far = Math.hypot(v.x + T / 2 - home.x, v.y + T / 2 - home.y) > (GUARD_RADIUS - 3) * T;
-  if (!battle.active) {
-    if (v.hp < fighterMaxHp(v)) healFighter(v);
-    if (far && !v.path?.length) { v.path = pathToGuard(v) || []; v.wait = 0; v.goingHome = true; }
-    if (!far) v.goingHome = false;
-    return;
-  }
-  const t0 = fightOf(v), tr = traitOf(v.npc);
-  const f = { ...t0, range: t0.range + (t0.weapon === 'gun' ? tr.range || 0 : 0) };
-  v.cd -= dt;
-  const me = { x: v.x + T / 2, y: v.y + T / 2 };
-  let foe = null, best = Infinity;
-  for (const m of battle.monsters) {
-    if (m.dead || Math.hypot(m.x - home.x, m.y - home.y) > GUARD_RADIUS * T) continue;
-    const d = Math.hypot(m.x - me.x, m.y - me.y);
-    if (d < best) { best = d; foe = m; }
-  }
-  v.foe = foe;
-  if (!foe) {
-    if (far && !v.path?.length) { v.path = pathToGuard(v) || []; v.wait = 0; }
-    return;
-  }
-  if (best <= f.range * T) {
-    v.path = null;
-    const dx = foe.x - me.x, dy = foe.y - me.y;
-    v.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
-    if (v.cd > 0) return;
-    v.cd = f.rate;
-    v.swing = 0.2;
-    const damage = f.damage * fighterScale(waveLevel(Math.max(1, run.wave))) * (tr.power || 1);
-    if (f.weapon === 'gun') {
-      const len = Math.hypot(dx, dy) || 1;
-      battle.shots.push({ x: me.x, y: me.y - 4, vx: dx / len, vy: dy / len, target: foe, def: { damage }, kind: 'bullet', travelled: 0, hits: new Set() });
-    } else {
-      battle.hitMonster(foe, damage);
-      battle.effects.push({ kind: 'burst', x: foe.x, y: foe.y - 4, t: 0, life: 0.15, color: 'w' });
-    }
-    return;
-  }
-  // Close in: the last few tiles go straight at it (if the ground allows), so a moving zombie can't
-  // keep a guard one step behind.
-  if (best < 3 * T) {
-    const dx = foe.x - me.x, dy = foe.y - me.y, len = Math.hypot(dx, dy) || 1;
-    const nx = v.x + (dx / len) * 40 * dt, ny = v.y + (dy / len) * 40 * dt;
-    if (v.canStand(Math.round(nx / T), Math.round(ny / T))) {
-      v.path = null; v.x = nx; v.y = ny; v.moving = true; v.t += dt;
-      v.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
-      return;
-    }
-  }
-  // Walk to it, planning a new path twice a second as it moves. Gunners keep their distance.
-  if ((v.repath = (v.repath || 0) - dt) > 0 && v.path?.length) return;
-  v.repath = 0.5;
-  const keep = Math.max(1, f.range - 1);
-  v.path = findPath(v, (c, r) => Math.hypot(c - foe.c, r - foe.r) <= keep, far ? 400 : 80, false, v.canStand) || [];
-  v.wait = 0;
-}
 
 // ---------- Your hero: a mobile tower ----------
-// Tap the hero for their menu: MOVE (then tap where they should stand guard - works mid-wave too),
-// UPGRADE (daytime) and LOOK. They shoot any zombie in range, on the way there too.
-let movingHero = false; // waiting for you to tap the hero's new guard spot
-const heroPost = () => game.hero.post || HERO_START;
-const heroMaxHp = () => heroStats(game.hero.level).hp;
-const heroTile = () => ({ c: Math.round(hero.x / T), r: Math.round(hero.y / T) });
+// Tap the pad for the hero's menu: MOVE (then tap where the pad should go - works mid-wave too), UPGRADE
+// (between waves) and LOOK. The hero shoots any zombie in range. Zombies hunt the pad; while it's broken the
+// hero is down. It heals over time (slowly during a wave, fast between waves, from rubble too).
+let movingHero = false; // waiting for you to tap the pad's new spot
 
-function sendHero(c, r) {
-  if (!heroCanStand(c, r)) { showToast("YOUR HERO CAN'T STAND THERE"); return false; }
-  game.hero.post = { c, r };
-  hero.path = null;
-  hero.repath = 0;
-  showToast('YOUR HERO IS ON THE WAY');
+function moveHeroPad(c, r) {
+  const pad = heroPad();
+  if (!pad) return false;
+  if (!ownsTile(c, r) || !fits(pad, c, r)) { showToast('PICK AN EMPTY SPOT ON YOUR LAND'); return false; }
+  pad.c = c; pad.r = r;
+  layoutChanged();
+  if (battle.active) battle.flowDirty = true; // the zombies re-aim
+  addPuff(c * T + T / 2, r * T + T / 2);
   saveGame();
   return true;
 }
@@ -923,159 +754,42 @@ function upgradeHero() {
   if (!canAfford(game, cost)) { showToast(`NOT ENOUGH ${missing(game, cost).toUpperCase()}`); return; }
   for (const k of RES) game[k] -= cost[k] || 0;
   game.hero.level++;
-  hero.hp = heroMaxHp();
+  const pad = heroPad();
+  if (pad) pad.hp = maxHp(pad);
   addPuff(hero.x + T / 2, hero.y + T / 2);
   showToast(`HERO REACHED LV ${game.hero.level}!`);
 }
 
+// The pad heals over time: slowly during a wave (never once broken), ten times faster between waves.
+function healPad(dt) {
+  const pad = heroPad();
+  if (!pad || (phase !== 'wave' && phase !== 'home')) return;
+  const max = maxHp(pad);
+  if (phase === 'wave') { if (pad.hp > 0) pad.hp = Math.min(max, pad.hp + HERO_PAD_HEAL * max * dt); } else pad.hp = Math.min(max, pad.hp + 10 * HERO_PAD_HEAL * max * dt);
+}
+
 function heroThink(dt) {
+  const pad = heroPad();
+  if (pad) { hero.x = pad.c * T; hero.y = pad.r * T; }
+  hero.down = !pad || pad.hp <= 0;
+  hero.t += dt;
   hero.swing = Math.max(0, (hero.swing || 0) - dt);
   hero.cd = (hero.cd || 0) - dt;
-  if (hero.hp === undefined || !battle.active) { hero.down = false; hero.hp = heroMaxHp(); }
-  if (hero.down) { hero.t += dt; return; }
+  if (hero.down || !battle.active) return;
   const f = heroStats(game.hero.level);
   const me = { x: hero.x + T / 2, y: hero.y + T / 2 };
-  hero.foe = null;
-  if (battle.active) {
-    let foe = null, best = Infinity;
-    for (const m of battle.monsters) {
-      if (m.dead) continue;
-      const d = Math.hypot(m.x - me.x, m.y - me.y);
-      if (d < best) { best = d; foe = m; }
-    }
-    if (foe && best <= f.range * T) {
-      hero.foe = foe;
-      if (hero.cd <= 0) {
-        hero.cd = f.rate;
-        hero.swing = 0.2;
-        const dx = foe.x - me.x, dy = foe.y - 4 - me.y, len = Math.hypot(dx, dy) || 1;
-        if (!hero.path?.length) hero.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
-        battle.shots.push({ x: me.x, y: me.y - 6, vx: dx / len, vy: dy / len, target: foe, def: { damage: f.damage }, kind: 'arrow', travelled: 0, hits: new Set() });
-      }
-    }
+  let foe = null, best = Infinity;
+  for (const m of battle.monsters) {
+    if (m.dead) continue;
+    const d = Math.hypot(m.x - me.x, m.y - me.y);
+    if (d < best) { best = d; foe = m; }
   }
-  // Head for the guard spot.
-  const p = heroPost(), t = heroTile();
-  if ((t.c !== p.c || t.r !== p.r) && !hero.path?.length && (hero.repath = (hero.repath || 0) - dt) <= 0) {
-    hero.repath = 1;
-    hero.path = findPath(hero, (c, r) => c === p.c && r === p.r, 400, false, heroCanStand) || [];
-  }
-}
-
-function npcThink(v, dt) {
-  const n = v.npc;
-  if (isFighter(v)) { fighterThink(v, dt); return; }
-
-  // Builders: keep the current job, or look for one every second.
-  if (v.job) {
-    const b = v.job;
-    const done = !game.buildings.includes(b) || b.hp >= maxHp(b);
-    if (done) { v.job = null; v.working = false; return; }
-    if (v.path?.length) return;
-    if (!npcInReach(v, b)) { const p = pathToReach(v, b); if (p) v.path = p; else v.job = null; return; }
-    faceTowards(v, b);
-    v.wait = 0.3;
-    if (n.role === 'builder') {
-      v.working = true;
-      const wasBroken = b.hp <= 0;
-      b.hp = Math.min(maxHp(b), b.hp + BUILDER_REPAIR_PER_SEC * (traitOf(n).power || 1) * dt);
-      if (wasBroken && b.hp > 0 && battle.active) battle.flowDirty = true; // it blocks the way again
-      if (b.hp >= maxHp(b)) { const p = centerOf(b); addPuff(p.x, p.y); v.job = null; v.working = false; saveGame(); }
-    }
-    return;
-  }
-  if ((v.scan -= dt) > 0) return;
-  v.scan = 1;
-  const busy = new Set(villagers.filter((o) => o !== v && o.job).map((o) => o.job));
-  const wants = (b) => !busy.has(b) && !isRunObject(b) && n.role === 'builder' && (b.type === 'wall' || b.type === 'tower') && b.hp < maxHp(b);
-  const t = vTile(v);
-  const todo = game.buildings.filter(wants).sort((a, b) => Math.hypot(a.c - t.c, a.r - t.r) - Math.hypot(b.c - t.c, b.r - t.r));
-  for (const b of todo.slice(0, 4)) {
-    const p = npcInReach(v, b) ? [] : pathToReach(v, b);
-    if (p) { v.job = b; v.path = p; v.wait = 0; return; }
-  }
-  // Nothing to fix: a builder far from the guard point (a new hire at the Tavern, say) walks there and potters
-  // about near your walls, so they're close when something breaks.
-  if (!v.path?.length && Math.hypot(v.x / T - GUARD_POINT.c, v.y / T - GUARD_POINT.r) > GUARD_RADIUS - 3) {
-    v.path = pathToGuard(v) || [];
-    v.wait = 0;
-  }
-}
-
-const traitOf = (n) => TRAITS[n.trait] || {};
-const pick = (list) => list[Math.floor(Math.random() * list.length)];
-
-// A fresh board of random applicants.
-function rollApplicants() {
-  const roles = Object.keys(NPC_ROLES);
-  const used = new Set(game.npcs.map((n) => n.name));
-  game.applicants = Array.from({ length: APPLICANTS }, () => {
-    const role = pick(roles);
-    const trait = pick(Object.keys(TRAITS).filter((k) => !TRAITS[k].roles || TRAITS[k].roles.includes(role)));
-    const mul = (TRAITS[trait].price || 1) * (0.85 + Math.random() * 0.35);
-    const price = {};
-    for (const [k, v] of Object.entries(NPC_ROLES[role].price)) price[k] = Math.max(5, Math.round((v * mul) / 5) * 5);
-    const name = pick(NPC_NAMES.filter((x) => !used.has(x))) || pick(NPC_NAMES);
-    used.add(name);
-    return { role, trait, name, price };
-  });
-}
-
-function rerollApplicants() {
-  if (!canAfford(game, REROLL_PRICE)) { showToast(`NOT ENOUGH ${missing(game, REROLL_PRICE).toUpperCase()}`); return false; }
-  for (const k of RES) game[k] -= REROLL_PRICE[k] || 0;
-  rollApplicants();
-  showToast('NEW FACES AT THE TAVERN!');
-  return true;
-}
-
-// Hire applicant i off the board (their spot stays empty until the board reshuffles).
-function hireApplicant(i) {
-  const a = game.applicants?.[i];
-  if (!a) return false;
-  if (!canAfford(game, a.price)) { showToast(`NOT ENOUGH ${missing(game, a.price).toUpperCase()}`); return false; }
-  for (const k of RES) game[k] -= a.price[k] || 0;
-  game.applicants[i] = null;
-  addNpc(a.role, a.name, a.trait);
-  return true;
-}
-
-function addNpc(role, name = pick(NPC_NAMES.filter((x) => !game.npcs.some((n) => n.name === x))) || pick(NPC_NAMES), trait = null) {
-  game.npcs.push({ id: game.nextNpc++, role, name, trait });
-  const tavern = SHOPS.find((s) => s.id === 'tavern');
-  syncNpcBodies(tavern.door); // they set off from the Tavern
-  showToast(`${name} THE ${NPC_ROLES[role].name.toUpperCase()} IS ON THE WAY!`);
-  saveGame();
-}
-
-// Hire a plain (no trait) person of a role at list price. Only the test hook and bots use this.
-function hireNpc(role) {
-  const price = NPC_ROLES[role].price;
-  if (!canAfford(game, price)) { showToast(`NOT ENOUGH ${missing(game, price).toUpperCase()}`); return false; }
-  for (const k of RES) game[k] -= price[k] || 0;
-  addNpc(role);
-  return true;
-}
-
-// ---------- The mayor's goals ----------
-// Every goal pays out the moment it's met (in any order); the banner shows the first one still to do.
-let goalClock = 0;
-const goalDone = (id) => game.goalsDone.includes(id);
-const nextGoal = () => GOALS.find((g) => !goalDone(g.id));
-function checkGoals(dt) {
-  if ((goalClock -= dt) > 0 || phase !== 'home') return;
-  goalClock = 1;
-  for (const goal of GOALS) {
-    if (goalDone(goal.id) || !goal.check(game)) continue;
-    const got = [];
-    for (const [k, v] of Object.entries(goal.reward)) {
-      if (k === 'gems') { game.gems += v; got.push(`${v} GEMS`); } else { const t = earn(game, k, v); got.push(`${t}${RES_LETTER[k]}`); }
-    }
-    game.goalsDone.push(goal.id);
-    showToast(`GOAL DONE: ${goal.text}  +${got.join(' +')}`);
-    saveGame();
-    return; // one a second, so the toasts don't pile up
-  }
+  if (!foe || best > f.range * T || hero.cd > 0) return;
+  hero.cd = f.rate;
+  hero.swing = 0.2;
+  const dx = foe.x - me.x, dy = foe.y - 4 - me.y, len = Math.hypot(dx, dy) || 1;
+  hero.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  battle.shots.push({ x: me.x, y: me.y - 10, vx: dx / len, vy: dy / len, target: foe, def: { damage: f.damage }, kind: 'arrow', travelled: 0, hits: new Set() });
 }
 
 // ---------- Screen, camera & UI scale ----------
@@ -1172,11 +886,11 @@ function layoutUI() {
     next: { x: mx + mw - 22, y: rowY(i) + 8, w: 16, h: 18, label: '>' },
   }));
 
-  // Card pick: up to 4 card rows, then REROLL and SKIP.
-  const cw = Math.min(210, UW - 12), cardH = 30, ch = 26 + 4 * (cardH + 4) + 26;
+  // Card pick: six cards in a 3×2 grid, then REROLL and SKIP.
+  const cw = Math.min(210, UW - 12), cardW = Math.floor((cw - 8 - 2 * 3) / 3), cardH = 54, ch = 26 + 2 * cardH + 3 + 26;
   const cx0 = Math.round((UW - cw) / 2), cy0 = Math.max(HUD_H + 2, Math.round((UH - BAR_H - ch) / 2));
   buttons.cardBox = { x: cx0, y: cy0, w: cw, h: ch };
-  buttons.cards = [0, 1, 2, 3].map((i) => ({ x: cx0 + 4, y: cy0 + 26 + i * (cardH + 4), w: cw - 8, h: cardH }));
+  buttons.cards = [0, 1, 2, 3, 4, 5].map((i) => ({ x: cx0 + 4 + (i % 3) * (cardW + 3), y: cy0 + 26 + Math.floor(i / 3) * (cardH + 3), w: cardW, h: cardH }));
   buttons.reroll = { x: cx0 + 4, y: cy0 + ch - 22, w: Math.floor(cw / 2) - 6, h: 18 };
   buttons.skip = { x: cx0 + Math.floor(cw / 2) + 2, y: cy0 + ch - 22, w: Math.floor(cw / 2) - 6, h: 18 };
 
@@ -1223,7 +937,7 @@ const RES_COLOR = { gold: PAL.y };
 const RES_LETTER = { gold: 'G' };
 
 // ---------- Runs & waves ----------
-// phase: 'home' (between waves: build, gather, hire) -> 'wave' (fighting) -> 'home' ... -> 'end' (world cleared or game over)
+// phase: 'title' (the home screen) -> 'home' (between waves: build, pick cards) -> 'wave' (fighting) -> 'home' ... -> 'end' (game over)
 
 let phase = 'home';
 let speed = Math.min(3, Math.max(1, loadPrefs().speed || 1)); // 1x/2x/3x, remembered across runs and lives
@@ -1233,32 +947,34 @@ const battle = new Battle({
   buildings: () => game.buildings,
   maxHp,
   run: () => run,
-  fighters: () => [...villagers.filter((v) => isFighter(v) && !v.down), ...(hero.down ? [] : [hero])],
-  hitFighter: (v, damage) => {
-    v.hp -= damage;
-    v.flash = 0.12;
-    if (v.hp <= 0) { v.down = true; v.path = null; v.foe = null; addPuff(v.x + T / 2, v.y + T / 2); showToast(`YOUR ${v.isHero ? 'HERO' : NPC_ROLES[v.npc.role].name.toUpperCase()} IS DOWN!`); }
-  },
-  // Zombies walk the path, the bridge and your land (never water), heading for the village entrance.
+  // Zombies walk the path, the bridge and your land (never water), hunting your towers; with none left, the
+  // village entrance.
   walkable: (c, r) => inWorld(c, r) && WALK[r * N + c] === 1,
   goals: () => PATH_COLS.map((c) => ({ c, r: villageGateRow(c) })),
   onBreakthrough: (m) => { addPuff(m.x, m.y); showToast('A ZOMBIE GOT INTO THE VILLAGE!'); },
   cave: () => ({ c: CAVE.c, r: CAVE.r }),
   onKill: (m) => {
-    // Zombies are your only income. The cat's perk: +20% gold.
-    const due = Math.round(killGold(m.def.gold, run.wave) * (run.omen.goldMul || 1) * (petPerk('cat') ? 1.2 : 1));
+    // Zombies are your only income.
+    const due = Math.round(killGold(m.def.gold, run.wave) * (run.omen.goldMul || 1));
     const gold = earn(game, 'gold', due);
     run.earned += gold;
     run.kills++;
     addPuff(m.x, m.y);
     if (gold) addFloat(`+${gold}`, m.x, m.y - 14);
   },
-  onDestroyed: (b) => { const p = centerOf(b); addPuff(p.x, p.y); },
+  onDestroyed: (b) => {
+    const p = centerOf(b);
+    addPuff(p.x, p.y);
+    if (b.type === 'heropad') showToast('YOUR HERO IS DOWN UNTIL THE WAVE ENDS!');
+    // A broken Gold Mine is gone for good (no rubble, no repair).
+    if (BUILDINGS[b.type].noRepair) { game.buildings.splice(game.buildings.indexOf(b), 1); showToast(`THE ${BUILDINGS[b.type].name.toUpperCase()} WAS DESTROYED!`); }
+  },
 });
 
 // ---------- Run cards ----------
 
-// Draw `n` distinct cards for the coming wave, by rarity odds.
+// Draw `n` distinct cards for the coming wave, by rarity odds (and each card's weight within its rarity:
+// wall packs come up often, but some hands still have none).
 function drawCards(n, wave) {
   const odds = rarityOdds(run.omen.luck ? Math.min(10, wave + 3) : wave);
   const allowed = (id) => {
@@ -1268,35 +984,45 @@ function drawCards(n, wave) {
     return have < (c.stacks || 1);
   };
   const out = [];
-  for (let tries = 0; out.length < n && tries < 200; tries++) {
+  for (let tries = 0; out.length < n && tries < 400; tries++) {
     let roll = Math.random() * 100, rarity = RARITY[0];
     for (let i = 0; i < RARITY.length; i++) { if (roll < odds[i]) { rarity = RARITY[i]; break; } roll -= odds[i]; }
     const pool = Object.keys(CARDS).filter((id) => CARDS[id].rarity === rarity && allowed(id) && !out.includes(id));
-    if (pool.length) out.push(pool[Math.floor(Math.random() * pool.length)]);
+    let w = Math.random() * pool.reduce((sum, id) => sum + (CARDS[id].weight || 1), 0);
+    const got = pool.find((id) => (w -= CARDS[id].weight || 1) < 0);
+    if (got) out.push(got);
   }
   return out;
 }
 
+// After every wave: six cards on offer, and you take two (three under the Thick Fog).
 function offerCards() {
-  run.choices = drawCards(run.omen.choices || 3, run.wave + 1);
+  run.choices = drawCards(CARDS_SHOWN, run.wave + 1);
+  run.picksLeft = run.omen.picks || PICKS;
+}
+
+// One pick used (taken or skipped): when none are left, the pick is over.
+function usePick() {
+  if (--run.picksLeft <= 0 || run.choices.every((id) => !id)) { run.choices = null; run.picksLeft = 0; }
 }
 
 function pickCard(i) {
   const id = run.choices?.[i];
   if (!id) return;
   const card = CARDS[id];
-  run.choices = null;
+  run.choices[i] = null;
+  usePick();
   if (card.kind === 'blessing') { applyBlessing(id); return; }
-  const type = card.kind === 'walls' ? 'barricade' : id;
+  // Wall packs drop plain walls into your items (Runner Rush doubles walls and traps).
+  const type = card.kind === 'walls' ? 'wall' : id;
   const n = card.kind === 'walls' ? card.count * (run.omen.pairs ? 2 : 1) : card.kind === 'trap' && run.omen.pairs ? 2 : 1;
   addItem(type, 1, n);
-  itemsOpen = true;
   selected = null;
   showToast(`${card.name.toUpperCase()} ADDED TO YOUR ITEMS`);
   saveGame();
 }
 
-// A run blessing (from a card or the General Store): on until the run ends.
+// A run blessing (from a card): on until the run ends.
 function applyBlessing(id) {
   run.blessings[id] = (run.blessings[id] || 0) + 1;
   if (id === 'stonemason') for (const b of game.buildings) if (isWallType(b.type) && b.hp > 0) b.hp = maxHp(b);
@@ -1304,19 +1030,27 @@ function applyBlessing(id) {
   saveGame();
 }
 
+// Skip one pick for gold (about a quarter of what the last wave brought in).
 function skipCard() {
   if (!run.choices) return;
-  run.choices = null;
-  const g = earn(game, 'gold', SKIP_GOLD);
+  usePick();
+  const g = earn(game, 'gold', skipGold(run.wave));
   showToast(`SKIPPED +${g} GOLD`);
   saveGame();
 }
 
+// Redraw all six: free while you have free rerolls, then for gold (more each time this run).
+const rerollCost = () => (run.rerolls > 0 ? null : rerollPrice(run.paidRerolls));
 function rerollCards() {
-  if (!run.choices || run.rerolls <= 0) return;
-  run.rerolls--;
+  if (!run.choices) return false;
+  const cost = rerollCost();
+  if (cost && !canAfford(game, cost)) { showToast('NOT ENOUGH GOLD TO REROLL'); return false; }
+  if (cost) { game.gold -= cost.gold; run.paidRerolls++; } else run.rerolls--;
+  const left = run.picksLeft;
   offerCards();
+  run.picksLeft = left;
   saveGame();
+  return true;
 }
 
 // ---------- Items (your inventory) ----------
@@ -1441,14 +1175,20 @@ function monsterPath() {
 function runSnapshot(inWave = false) {
   return {
     wave: run.wave, earned: run.earned, kills: run.kills, blessings: run.blessings, rerolls: run.rerolls,
-    choices: run.choices, omen: OMENS.indexOf(run.omen), inWave,
+    paidRerolls: run.paidRerolls, choices: run.choices, picksLeft: run.picksLeft, omen: OMENS.indexOf(run.omen), inWave,
   };
 }
 function restoreRun() {
   const r = game.runState;
   if (!r) return startRun();
-  Object.assign(run, { kills: 0, ...r, omen: OMENS[r.omen] || OMENS[OMENS.length - 1] });
+  Object.assign(run, { kills: 0, paidRerolls: 0, ...r, omen: OMENS[r.omen] || OMENS[OMENS.length - 1] });
   delete run.inWave;
+  // Older saves: one card out of three on offer, and cards that no longer exist.
+  if (run.choices) {
+    run.choices = run.choices.map((id) => (CARDS[id] ? id : null));
+    run.picksLeft ??= 1;
+    if (!run.choices.some(Boolean)) { run.choices = null; run.picksLeft = 0; }
+  }
   phase = 'home';
   // The app was closed during a wave: that wave starts again from the state it began in.
   if (r.inWave) { run.wave = Math.max(0, run.wave - 1); showToast(`WAVE ${run.wave + 1} WAS CUT SHORT - IT STARTS AGAIN`); }
@@ -1464,7 +1204,8 @@ function startRun() {
   run.kills = 0;
   run.dead = false;
   run.blessings = {};
-  run.rerolls = 1 + (petPerk('owl') ? 1 : 0);
+  run.rerolls = FREE_REROLLS;
+  run.paidRerolls = 0;
   run.omen = OMENS[Math.floor(Math.random() * OMENS.length)];
   battle.reset();
   phase = 'home';
@@ -1472,6 +1213,19 @@ function startRun() {
 }
 
 const isKingWave = (wave) => wave % BOSS_EVERY === 0;
+
+// What the next wave brings, for the bottom bar: "WAVE 12: 27 ZOMBIES 12 RUNNERS 4 BRUTES" (short form when
+// that's too wide for the screen).
+const PREVIEW_NAMES = { zombie: ['ZOMBIE', 'ZOMBIES', 'Z'], runner: ['RUNNER', 'RUNNERS', 'R'], brute: ['BRUTE', 'BRUTES', 'B'],
+  breaker: ['BREAKER', 'BREAKERS', 'WB'], swarm: ['SWARM', 'SWARM', 'S'], tank: ['TANK', 'TANKS', 'T'], king: ['KING', 'KINGS', 'K'] };
+function wavePreview(wave) {
+  const counts = {};
+  for (const s of waveList(wave, run.omen)) counts[s.type] = (counts[s.type] || 0) + 1;
+  const parts = Object.entries(counts);
+  const long = `WAVE ${wave}: ${parts.map(([t, n]) => `${n} ${PREVIEW_NAMES[t][n > 1 ? 1 : 0]}`).join(' ')}`;
+  if (textWidth(long) <= UW - 8) return long;
+  return `WAVE ${wave}: ${parts.map(([t, n]) => `${n}${PREVIEW_NAMES[t][2]}`).join(' ')}`;
+}
 
 // START WAVE.
 function nextWave() {
@@ -1482,22 +1236,28 @@ function nextWave() {
   phase = 'wave';
   battle.startWave(run.wave);
   const kings = run.wave / BOSS_EVERY;
-  showToast(isKingWave(run.wave) ? (kings > 1 ? `WAVE ${run.wave} - ${kings} KINGS ARE COMING!` : `WAVE ${run.wave} - THE KING IS COMING!`) : `WAVE ${run.wave} - HERE THEY COME!`);
+  // A new kind of zombie's first wave gets its own warning.
+  const debut = Object.values(MONSTERS).find((m) => m.debut === run.wave);
+  showToast(debut ? `WAVE ${run.wave} - NEW: ${debut.name.toUpperCase()}!`
+    : isKingWave(run.wave) ? (kings > 1 ? `WAVE ${run.wave} - ${kings} KINGS ARE COMING!` : `WAVE ${run.wave} - THE KING IS COMING!`) : `WAVE ${run.wave} - HERE THEY COME!`);
 }
 
-// Wave cleared: a card and new faces at the Tavern arrive.
+// Wave cleared: the clear bonus, each surviving Gold Mine's payout, and the next cards.
 function waveCleared() {
   battle.active = false;
   const due = Math.round(waveBonus(run.wave) * (run.omen.bonusMul || 1));
   const bonus = earn(game, 'gold', due);
   run.earned += bonus;
+  const mines = game.buildings.filter((b) => b.type === 'goldmine' && b.hp > 0).length;
+  const mined = mines ? earn(game, 'gold', mines * mineGold(run.wave)) : 0;
+  run.earned += mined;
+  for (const b of game.buildings) if (b.type === 'goldmine' && b.hp > 0) { const p = centerOf(b); addFloat(`+${mineGold(run.wave)}`, p.x, p.y - 14); }
   game.stats.bestWave = Math.max(game.stats.bestWave, run.wave);
   for (const b of game.buildings) if (b.type === 'tree' || BUILDINGS[b.type].decor) b.hp = maxHp(b);
   phase = 'home';
   battle.endWave();
   offerCards();
-  rollApplicants(); // new faces at the Tavern after every wave
-  showToast(`WAVE ${run.wave} CLEARED! +${bonus} GOLD`);
+  showToast(`WAVE ${run.wave} CLEARED! +${bonus}G${mined ? `  MINE +${mined}G` : ''}`);
   saveGame();
 }
 
@@ -1523,8 +1283,7 @@ function recordRun() {
   run.gems = gemsForRun(waves);
   game.gems += run.gems;
   const entry = {
-    waves, kills: run.kills, gold: run.earned, hero: game.hero.level,
-    people: game.npcs.length, omen: run.omen.name, life: game.records.lives, at: Date.now(),
+    waves, kills: run.kills, gold: run.earned, omen: run.omen.name, life: game.records.lives, at: Date.now(),
   };
   const runs = [...game.records.runs, entry].sort((a, b) => b.waves - a.waves || b.kills - a.kills);
   run.rank = runs.indexOf(entry) < TOP_RUNS ? runs.indexOf(entry) + 1 : 0;
@@ -1540,7 +1299,7 @@ const carryOver = (newLifeToo = true) => ({
 // Everything the UI remembers about the old game: cleared whenever a run starts or ends.
 function resetUiState() {
   selected = null; placing = null; placingItem = null; itemsOpen = false; itemsScroll = 0; multi = [];
-  buildMode = false; movingHero = false; menuOpen = false; shopOpen = null; lookOpen = false; offer = null;
+  buildMode = false; movingHero = false; menuOpen = false; heroOpen = false; lookOpen = false; offer = null;
 }
 
 // After the game-over screen: a brand new life, starting at the home screen.
@@ -1555,7 +1314,6 @@ function afterEnd() {
 // Start a brand new game in memory (the old one is gone).
 function newLife() {
   game = upgradeSave(newGame());
-  villagers = [];
   owned = new Set(game.owned);
   battle.reset();
   startRun();
@@ -1563,6 +1321,7 @@ function newLife() {
   homeView();
 }
 
+// Gold to fix a building back to full health (from rubble: the whole repair price). The hero's pad heals itself.
 const repairCostOf = (b) => Math.ceil((1 - b.hp / maxHp(b)) * BUILDINGS[b.type].repair * 1.5 ** ((b.level || 1) - 1));
 const repairCost = () => game.buildings.reduce((sum, b) => sum + repairCostOf(b), 0);
 
@@ -1594,6 +1353,17 @@ function repairOne(b) {
   b.hp = maxHp(b);
   const p = centerOf(b);
   addPuff(p.x, p.y);
+  saveGame();
+}
+
+// Clear rubble away for free: the tiles are free again (and what stood there is gone).
+function clearRubble(b) {
+  if (b.hp > 0 || b.type === 'heropad' || !game.buildings.includes(b)) return;
+  game.buildings.splice(game.buildings.indexOf(b), 1);
+  const p = centerOf(b);
+  addPuff(p.x, p.y);
+  selected = null;
+  showToast('CLEARED');
   saveGame();
 }
 
@@ -1712,155 +1482,41 @@ function drawLook(time) {
   drawButton(buttons.menuClose, 'DONE');
 }
 
-// ---------- Shops ----------
-let shopOpen = null; // 'petshop' | 'store' | 'tavern'
+// ---------- The hero's menu (tap the pad) ----------
+let heroOpen = false;
 
-function payFor(price) {
-  if (!canAfford(game, price)) return false;
-  for (const k of RES) game[k] -= price[k] || 0;
-  return true;
+function heroMenu() {
+  const lvl = game.hero.level, st = heroStats(lvl), max = lvl >= HERO_MAX_LEVEL;
+  const cost = heroUpgradeCost(lvl), pad = heroPad();
+  return [
+    { title: 'MOVE THE HERO PAD', sub: 'THEN TAP A SPOT - EVEN MID-WAVE', label: 'MOVE', style: 'primary',
+      act: () => { movingHero = true; heroOpen = false; showToast('TAP WHERE THE HERO PAD SHOULD GO'); } },
+    { title: `HP ${st.hp}  DMG ${Math.round(st.damage)}  RANGE ${st.range}`,
+      sub: max ? 'MAX LEVEL' : `NEXT LEVEL ${formatCost(cost)}`,
+      label: max ? 'MAX' : 'UPGRADE', style: !max && canAfford(game, cost) && phase === 'home' ? 'primary' : 'off', act: upgradeHero },
+    { title: 'YOUR LOOK', sub: 'HAIR, SKIN, SHIRT AND PANTS', label: 'CHANGE', style: 'normal',
+      act: () => { heroOpen = false; lookOpen = true; } },
+    { title: pad ? `PAD ${Math.ceil(pad.hp)}/${maxHp(pad)}` : 'NO PAD', sub: 'ZOMBIES HUNT IT. IT HEALS ITSELF', label: 'INFO', style: 'off', act: () => {} },
+  ];
 }
 
-function shopItems() {
-  // Blacksmith: building kits, straight into your items.
-  if (shopOpen === 'blacksmith') {
-    return BLACKSMITH_GOODS.map((g) => ({
-      title: g.name, sub: `${formatCost(g.price)} - ${g.about}`, label: 'BUY',
-      style: canAfford(game, g.price) ? 'primary' : 'off',
-      act: () => {
-        if (!payFor(g.price)) { showToast('NOT ENOUGH GOLD'); return; }
-        addItem(g.type, 1, g.n);
-        showToast(`${g.name} - IN YOUR ITEMS`);
-      },
-    }));
-  }
-  // Chapel: a blessing for the run.
-  if (shopOpen === 'chapel') {
-    return [
-      { title: 'PRAY FOR LUCK', sub: `${formatCost(CHAPEL_PRAYER)} - +1 CARD REROLL THIS RUN`, label: 'PRAY',
-        style: canAfford(game, CHAPEL_PRAYER) ? 'primary' : 'off',
-        act: () => { if (!payFor(CHAPEL_PRAYER)) { showToast('NOT ENOUGH GOLD'); return; } run.rerolls++; showToast(`REROLLS: ${run.rerolls}`); } },
-    ];
-  }
-  // Town Hall: the mayor's to-do list (your goals).
-  if (shopOpen === 'townhall') {
-    // The five goals around the first one still to do: done ones above it, the rest below.
-    const firstOpen = Math.max(0, GOALS.findIndex((g) => !goalDone(g.id)));
-    const from = Math.max(0, Math.min(firstOpen - 1, GOALS.length - 5));
-    return GOALS.slice(from, from + 5).map((g) => {
-      const done = goalDone(g.id);
-      const reward = Object.entries(g.reward).map(([r, v]) => `${v}${r === 'gems' ? ' GEMS' : RES_LETTER[r]}`).join(' ');
-      return { title: g.text, sub: done ? 'DONE - THANK YOU!' : `REWARD ${reward}`, label: done ? 'DONE' : 'TO DO', style: done ? 'good' : 'off', act: () => {} };
-    }).concat([{ title: `THE VILLAGE IS COUNTING ON YOU`, sub: `BEST RUN: ${game.records.runs[0]?.waves ?? 0} WAVES`, label: 'INFO', style: 'off', act: () => {} }]);
-  }
-  if (shopOpen === 'hero') {
-    const lvl = game.hero.level, st = heroStats(lvl), max = lvl >= HERO_MAX_LEVEL;
-    const cost = heroUpgradeCost(lvl);
-    return [
-      { title: 'STAND GUARD SOMEWHERE ELSE', sub: 'THEN TAP A SPOT - EVEN MID-WAVE', label: 'MOVE', style: 'primary',
-        act: () => { movingHero = true; shopOpen = null; showToast('TAP WHERE YOUR HERO SHOULD STAND GUARD'); } },
-      { title: `HP ${st.hp}  DMG ${Math.round(st.damage)}  RANGE ${st.range}`,
-        sub: max ? 'MAX LEVEL' : `NEXT LEVEL ${formatCost(cost)}`,
-        label: max ? 'MAX' : 'UPGRADE', style: !max && canAfford(game, cost) && phase === 'home' ? 'primary' : 'off', act: upgradeHero },
-      { title: 'YOUR LOOK', sub: 'HAIR, SKIN, SHIRT AND PANTS', label: 'CHANGE', style: 'normal',
-        act: () => { shopOpen = null; lookOpen = true; } },
-    ];
-  }
-  if (shopOpen === 'petshop') {
-    const rows = Object.entries(PETS).map(([id, p]) => {
-      const owned = game.pets.owned.includes(id);
-      const active = game.pets.active === id;
-      return {
-        title: p.name.toUpperCase(),
-        sub: owned ? p.perk : `${p.perk}  ${formatCost(p.price)}`,
-        label: active ? 'WITH YOU' : owned ? 'TAKE' : 'BUY',
-        style: active ? 'off' : owned ? 'normal' : canAfford(game, p.price) ? 'primary' : 'off',
-        act: () => {
-          if (active) return;
-          if (!owned) {
-            if (!payFor(p.price)) { showToast(`NOT ENOUGH ${missing(game, p.price).toUpperCase()}`); return; }
-            game.pets.owned.push(id);
-            showToast(`${p.name.toUpperCase()} JOINED YOU!`);
-          }
-          game.pets.active = id;
-          pet.x = hero.x; pet.y = hero.y;
-        },
-      };
-    });
-    return rows;
-  }
-  // General store: run blessings for gold (the same ones the cards give).
-  if (shopOpen === 'store') {
-    return Object.entries(STORE_ITEMS).map(([id, it]) => {
-      const have = run.blessings[it.blessing] || 0, max = CARDS[it.blessing].stacks || 1;
-      const full = have >= max;
-      return {
-        title: `${it.name.toUpperCase()}${have ? `  (${have}/${max})` : ''}`,
-        sub: full ? 'YOU HAVE THE MOST OF THESE' : `${it.about}  ${formatCost(it.price)}`, label: full ? 'MAX' : 'BUY',
-        style: !full && canAfford(game, it.price) ? 'primary' : 'off',
-        act: () => {
-          if (full) return;
-          if (!payFor(it.price)) { showToast(`NOT ENOUGH ${missing(game, it.price).toUpperCase()}`); return; }
-          applyBlessing(it.blessing);
-        },
-      };
-    });
-  }
-  const full = false; // v2: no cap on people
-  // Tavern: whoever happens to be looking for work today (roguelike: you adapt to who turns up).
-  if (!game.applicants) rollApplicants();
-  const rows = game.applicants.map((a, i) => {
-    if (!a) return { title: '(HIRED)', sub: 'SOMEONE NEW COMES AFTER THE NEXT WAVE', label: '-', style: 'off', act: () => {} };
-    const r = NPC_ROLES[a.role], t = TRAITS[a.trait];
-    return {
-      title: `${a.name} - ${t.name} ${r.name.toUpperCase()}`,
-      sub: `${formatCost(a.price)} - ${t.about}`,
-      label: full ? 'FULL' : 'HIRE',
-      style: !full && canAfford(game, a.price) ? 'primary' : 'off',
-      act: () => hireApplicant(i),
-    };
-  });
-  rows.push({
-    title: 'NEW FACES', sub: `SEE WHO ELSE IS LOOKING FOR WORK  ${formatCost(REROLL_PRICE)}`,
-    label: 'REROLL', style: canAfford(game, REROLL_PRICE) ? 'primary' : 'off', act: rerollApplicants,
-  });
-  const count = (f) => game.npcs.filter(f).length;
-  rows.push({
-    title: `YOUR PEOPLE: ${game.npcs.length}`,
-    sub: game.npcs.length ? `${count((n) => n.role === 'builder')} BUILDERS  ${count((n) => NPC_ROLES[n.role].fight)} FIGHTERS` : 'NOBODY YET - HIRE SOMEONE ABOVE',
-    label: 'INFO', style: 'off', act: () => {},
-  });
-  return rows;
+function onHeroTap(p) {
+  const rows = heroMenu();
+  const i = buttons.shopRows.findIndex((b, k) => k < rows.length && inRect(p, b));
+  if (i >= 0) { rows[i].act(); saveGame(); return; }
+  if (inRect(p, buttons.menuClose) || !inRect(p, buttons.menu)) heroOpen = false;
 }
-
-function openShop(id) {
-  shopOpen = id;
-  selected = null;
-  hero.dir = 'up';
-}
-
-function onShopTap(p) {
-  const items = shopItems();
-  const i = buttons.shopRows.findIndex((b, k) => k < items.length && inRect(p, b));
-  if (i >= 0) { items[i].act(); saveGame(); return; }
-  if (inRect(p, buttons.menuClose) || !inRect(p, buttons.menu)) shopOpen = null;
-}
-
 function onWorldTap(sx, sy) {
   const w = screenToWorld(sx, sy);
   const c = Math.floor(w.x / T), r = Math.floor(w.y / T);
   if (!inWorld(c, r)) return;
   if (multi.length) { multi = []; return; } // tapping the map lets go of a wall selection
   if (isCave(c, r)) { selected = null; showToast('ZOMBIES COME OUT OF THIS DEN'); return; }
-  // Your hero: tap them for their menu; after MOVE, the next tap picks their guard spot.
-  if (movingHero) {
-    movingHero = false;
-    if (ownsTile(c, r) || isRoad(c, r)) sendHero(c, r); else showToast('PICK A SPOT ON YOUR LAND');
-    return;
-  }
-  const ht = heroTile();
-  if (!buildMode && !placing && !placingItem && !hero.down && c === ht.c && (r === ht.r || r === ht.r - 1)) { selected = null; shopOpen = 'hero'; return; }
-  if (phase === 'wave') { showToast('TAP YOUR HERO TO MOVE THEM'); return; }
+  // After MOVE, the next tap picks the hero pad's new spot.
+  if (movingHero) { movingHero = false; moveHeroPad(c, r); return; }
+  // The hero's pad: tap it for the hero's menu (mid-wave too).
+  if (!buildMode && !placing && !placingItem && buildingAt(c, r)?.type === 'heropad') { selected = null; heroOpen = true; return; }
+  if (phase === 'wave') { showToast('TAP THE HERO PAD TO MOVE YOUR HERO'); return; }
   // The wild parts of the valley: say what they are.
   const gr = ground(c, r);
   if (!isRoad(c, r) && !isTrail(c, r) && !isBridge(c, r) && !isPlaza(c, r)) {
@@ -1870,14 +1526,14 @@ function onWorldTap(sx, sy) {
     if (isRiver(c, r)) { showToast('THE RIVER - ZOMBIES CROSS AT THE BRIDGE'); return; }
     if (gr === 'forest' || gr === 'riverband') { showToast('DEEP FOREST - ONLY ZOMBIES GO IN THERE'); return; }
   }
-  // The village: tap a shop (or its keeper) to go in.
+  // The village: scenery (the thing you protect). Tapping it just says what it is.
   if (inVillage(c, r) || isTrail(c, r) || isBridge(c, r) || isPlaza(c, r)) {
-    const shop = shopAt(c, r) || shopkeeperAt(c, r)?.shop;
-    if (shop) { openShop(shop.id); return; }
-    const home = homeAt(c, r);
-    if (home) { showToast(`THE ${home.family} FAMILY LIVES HERE - KEEP THEM SAFE`); return; }
-    if (c === WELL.c && r === WELL.r) { showToast('A WISHING WELL. NOTHING HAPPENS... YET'); return; }
     selected = null;
+    const lm = landmarkAt(c, r), home = homeAt(c, r);
+    if (lm) showToast(`THE ${lm.name.toUpperCase()} - KEEP THE VILLAGE SAFE`);
+    else if (home) showToast(`THE ${home.family} FAMILY LIVES HERE - KEEP THEM SAFE`);
+    else if (c === WELL.c && r === WELL.r) showToast('THE VILLAGE WELL');
+    else if (isBridge(c, r) && r >= RIVER_TOP) showToast('IF ONE ZOMBIE CROSSES THIS BRIDGE, IT IS OVER');
     return;
   }
   const [cx, cy] = chunkOfTile(c, r);
@@ -1935,14 +1591,14 @@ const inRect = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.
 const toUI = (sx, sy) => ({ x: (sx * dpr) / ui, y: (sy * dpr) / ui });
 const showPanel = () => selected && phase !== 'wave' && phase !== 'end' && !placing && !itemsOpen;
 const showRepair = () => phase === 'home' && !buildMode && !itemsOpen && !showPanel() && !multi.length && repairCost() > 0;
-// Anything but trees can be put away in your items (between waves).
-const canStore = (b) => phase === 'home' && b && b.type !== 'tree';
+// Anything standing but trees and the hero's pad can be put away in your items (between waves).
+const canStore = (b) => phase === 'home' && b && b.type !== 'tree' && b.type !== 'heropad' && b.hp > 0;
 const storeButton = (b) => (BUILDINGS[b.type].run || BUILDINGS[b.type].decor ? buttons.storeTop : buttons.store);
 
 // Is this screen point on top of a UI element (so it shouldn't pan the map)?
 function onUI(sx, sy) {
   const p = toUI(sx, sy);
-  if (offer || menuOpen || shopOpen || lookOpen || runsOpen || settingsOpen || phase === 'end' || phase === 'title' || run.choices) return true;
+  if (offer || menuOpen || heroOpen || lookOpen || runsOpen || settingsOpen || phase === 'end' || phase === 'title' || run.choices) return true;
   if (inRect(p, buttons.settings)) return true;
   if (showMulti() && inRect(p, buttons.panel)) return true;
   if (phase === 'home' && !showPanel() && !showMulti()) { const { bar, tab } = itemsLayout(); if (inRect(p, tab) || (itemsOpen && inRect(p, bar))) return true; }
@@ -2037,13 +1693,13 @@ function onTap(sx, sy) {
     return;
   }
   if (menuOpen) return onMenuTap(p);
-  if (shopOpen) return onShopTap(p);
+  if (heroOpen) return onHeroTap(p);
   if (lookOpen) return onLookTap(p);
   if (inRect(p, buttons.settings)) { settingsOpen = true; restartTaps = 0; return; } // works during the card pick too
   if (run.choices) {
-    const i = buttons.cards.findIndex((b, k) => k < run.choices.length && inRect(p, b));
+    const i = buttons.cards.findIndex((b, k) => k < run.choices.length && run.choices[k] && inRect(p, b));
     if (i >= 0) return pickCard(i);
-    if (inRect(p, buttons.reroll)) return run.rerolls > 0 ? rerollCards() : showToast('NO REROLLS LEFT');
+    if (inRect(p, buttons.reroll)) return rerollCards();
     if (inRect(p, buttons.skip)) return skipCard();
     return;
   }
@@ -2069,10 +1725,19 @@ function onTap(sx, sy) {
     }
   }
   if (showPanel() && inRect(p, buttons.panel)) {
+    // Rubble: REPAIR (gold) or CLEAR (free).
+    if (selected.hp <= 0) {
+      if (buildMode || phase !== 'home') return;
+      if (inRect(p, buttons.upgrade) && repairCostOf(selected) > 0) repairOne(selected);
+      else if (inRect(p, buttons.store)) clearRubble(selected);
+      return;
+    }
+    const def = BUILDINGS[selected.type];
+    // A damaged card tower: FIX sits where its PUT AWAY button would be.
+    if (def.run && !buildMode && phase === 'home' && repairCostOf(selected) > 0) { if (inRect(p, buttons.upgrade)) repairOne(selected); return; }
     if (canStore(selected) && inRect(p, storeButton(selected))) return storeBuilding(selected);
     // Only the buttons the panel actually draws respond (none in build mode).
     if (buildMode) return;
-    const def = BUILDINGS[selected.type];
     if (def.run || def.decor || selected.type === 'tree') return;
     if (phase === 'home' && inRect(p, buttons.upgrade) && repairCostOf(selected) > 0) repairOne(selected);
     else if (phase === 'home' && inRect(p, buttons.upgrade)) tryUpgrade(selected);
@@ -2381,7 +2046,9 @@ function drawBuilding(b, now) {
     return;
   }
   const flashing = battle.flash.has(b);
-  if (isWallType(b.type)) {
+  if (b.type === 'heropad') {
+    ctx.drawImage(padImg, x, y);
+  } else if (isWallType(b.type)) {
     // Join up with standing walls (and run barricades) on each side. Barricades look like log walls.
     const isWall = (c, r) => { const o = buildingAt(c, r); return o && isWallType(o.type) && o.hp > 0; };
     const mask = (isWall(b.c, b.r - 1) ? WALL_N : 0) | (isWall(b.c + 1, b.r) ? WALL_E : 0)
@@ -2412,7 +2079,7 @@ function drawMonster(m) {
   let x = m.x + m.ox, y = m.y + m.oy;
   // Lunge toward what it's hitting, right after a hit.
   if (m.attacking && m.atk > m.def.rate - 0.15) {
-    const tc = m.attacking.npc || m.attacking.isHero ? { x: m.attacking.x + T / 2, y: m.attacking.y + T / 2 } : centerOf(m.attacking);
+    const tc = centerOf(m.attacking);
     if (Math.abs(tc.x - m.x) > T / 2) x += Math.sign(tc.x - m.x) * 3;
     if (Math.abs(tc.y - m.y) > T / 2) y += Math.sign(tc.y - m.y) * 3;
   }
@@ -2426,46 +2093,28 @@ function drawMonster(m) {
   if (battle.time < m.slowUntil) { ctx.fillStyle = PAL.c; ctx.fillRect(fx - 6, fy, 2, 2); ctx.fillRect(fx + 5, fy - 3, 2, 2); }
   if (m.poison > 0) { ctx.fillStyle = PAL.l; ctx.fillRect(fx + 3, fy + 4 + (Math.floor(m.t * 4) % 3), 1, 2); }
   if (m.stun > 0) { ctx.fillStyle = PAL.y; ctx.fillRect(fx - 4 + Math.round(Math.sin(m.t * 8) * 4), sy + 4, 2, 2); }
+  // The wall-breaker carries a big hammer.
+  if (m.def.breaker) {
+    const hx = sx + 19, hy = sy + 6 - (m.attacking && m.atk > m.def.rate - 0.15 ? 2 : 0);
+    ctx.fillStyle = PAL.N; ctx.fillRect(hx, hy + 2, 1, 8);
+    ctx.fillStyle = PAL.k; ctx.fillRect(hx - 2, hy - 1, 6, 4);
+    ctx.fillStyle = PAL.S; ctx.fillRect(hx - 1, hy, 4, 2);
+  }
   if (m.hp < m.maxHp) drawBar(Math.round(x - 6 * s), sy + (big ? 14 : 8), 12 * s, m.hp / m.maxHp);
 }
 
-// A fighter's sword or gun, held on the side they face. The sword swings flat for a moment after a hit.
-function drawWeapon(v) {
-  const x = Math.round(v.x), y = Math.round(v.y);
-  const left = v.dir === 'left';
-  const hx = left ? x + 4 : x + 18, hy = y + 15;  // the hand
-  const swing = v.swing > 0;
-  if (fightOf(v).weapon === 'sword') {
-    ctx.fillStyle = PAL.N; ctx.fillRect(hx - 1, hy, 3, 1);          // cross-guard
-    ctx.fillStyle = PAL.w;
-    if (swing) ctx.fillRect(left ? hx - 7 : hx + 1, hy - 1, 7, 1); // blade out flat
-    else ctx.fillRect(hx, hy - 7, 1, 7);                            // blade up
-  } else {
-    ctx.fillStyle = PAL.k; ctx.fillRect(left ? hx - 4 : hx, hy - 1, 5, 2);
-    if (swing) { ctx.fillStyle = PAL.y; ctx.fillRect(left ? hx - 6 : hx + 5, hy - 1, 2, 2); }
-  }
-  if (battle.active && v.hp < fighterMaxHp(v)) drawBar(x + 6, y + 2, 12, v.hp / fighterMaxHp(v));
-}
-
-// Your hero, with their bow (drawn back for a moment after a shot), health during a wave, and a little
-// flag on their guard spot while they walk there.
+// Your hero, standing on their pad with their bow (drawn back for a moment after a shot). While the pad is
+// broken, they lie on the rubble until the wave ends.
 function drawHero() {
-  const x = Math.round(hero.x), y = Math.round(hero.y);
-  const p = heroPost(), t = heroTile();
-  if (t.c !== p.c || t.r !== p.r) {
-    ctx.fillStyle = PAL.N; ctx.fillRect(p.c * T + 11, p.r * T + 8, 1, 12);
-    ctx.fillStyle = PAL.y; ctx.fillRect(p.c * T + 12, p.r * T + 8, 5, 4);
-  }
+  const x = Math.round(hero.x), y = Math.round(hero.y) - 5;
   if (hero.down) {
     ctx.globalAlpha = 0.45;
-    ctx.drawImage(heroImg('down', 0), x, y + 3);
+    ctx.drawImage(heroImg('down', 0), x, y + 6);
     ctx.globalAlpha = 1;
-    if (Math.floor(hero.t * 2) % 2) { ctx.fillStyle = PAL.R; ctx.fillRect(x + 11, y + 2, 2, 2); }
+    if (Math.floor(hero.t * 2) % 2) { ctx.fillStyle = PAL.R; ctx.fillRect(x + 11, y + 4, 2, 2); }
     return;
   }
-  const frame = hero.moving ? Math.floor(hero.t * 7) % 2 : 0;
-  ctx.drawImage(img.shadow, x, y);
-  ctx.drawImage(heroImg(hero.dir, frame), x, y - (hero.moving && frame ? 1 : 0));
+  ctx.drawImage(heroImg(hero.dir, 0), x, y);
   // The bow: a curved stave and a string, held on the side they face.
   const left = hero.dir === 'left';
   const bx = left ? x + 3 : x + 19, by = y + 9;
@@ -2473,16 +2122,7 @@ function drawHero() {
   ctx.fillRect(bx + (left ? 0 : 1), by, 1, 1); ctx.fillRect(bx + (left ? -1 : 2), by + 1, 1, 5); ctx.fillRect(bx + (left ? 0 : 1), by + 6, 1, 1);
   ctx.fillStyle = PAL.w;
   ctx.fillRect(bx + (left ? 1 : 0) + (hero.swing > 0 ? (left ? 1 : -1) : 0), by + 1, 1, 5);
-  if (battle.active && hero.hp < heroMaxHp()) drawBar(x + 6, y + 1, 12, hero.hp / heroMaxHp());
 }
-
-function drawDownedFighter(v) {
-  ctx.globalAlpha = 0.45;
-  ctx.drawImage(personImg(v.look, 'down', 0), Math.round(v.x), Math.round(v.y) + 3);
-  ctx.globalAlpha = 1;
-  if (Math.floor(v.t * 2) % 2) { ctx.fillStyle = PAL.R; ctx.fillRect(Math.round(v.x) + 11, Math.round(v.y) + 2, 2, 2); }
-}
-
 function drawShots() {
   for (const a of battle.shots) {
     const X = Math.round(a.x), Y = Math.round(a.y);
@@ -2521,38 +2161,40 @@ function drawShots() {
 const RARITY_COLOR = { common: PAL.s, rare: PAL.c, epic: '#c86bff' };
 const cardImgCache = new Map();
 function cardIcon(id) {
-  if (!cardImgCache.has(id)) cardImgCache.set(id, rowsToCanvas(cardRows(id === 'barricade' ? 'stonemason' : id)));
+  if (CARDS[id]?.kind === 'walls') return levelImg('wall', id === 'walls15' ? 2 : 1, WALL_E | WALL_W, false);
+  if (!cardImgCache.has(id)) cardImgCache.set(id, rowsToCanvas(cardRows(id)));
   return cardImgCache.get(id);
 }
 
+// The card pick: six cards in a 3×2 grid, take two. A taken card stays as an empty slot.
 function drawCardPick() {
   const box = buttons.cardBox;
   ctx.fillStyle = 'rgba(26,28,44,0.55)';
   ctx.fillRect(0, 0, UW, UH);
   panelBox(box);
   const wave = run.wave + 1;
-  drawText(ctx, `WAVE ${wave} - PICK A CARD`, box.x + 6, box.y + 5, PAL.w);
+  const head = `WAVE ${wave} - TAKE ${run.picksLeft} MORE`;
+  drawText(ctx, head, box.x + 6, box.y + 5, PAL.w);
   drawText(ctx, `OMEN: ${run.omen.name.toUpperCase()}  +${run.omen.good}`, box.x + 6, box.y + 13, PAL.l);
-  if (run.omen.bad !== run.omen.good) drawText(ctx, `-${run.omen.bad}`, box.x + 6 + textWidth('OMEN: ') , box.y + 19, PAL.R);
+  if (run.omen.bad !== run.omen.good) drawText(ctx, `-${run.omen.bad}`, box.x + 6 + textWidth('OMEN: '), box.y + 19, PAL.R);
   run.choices.forEach((id, i) => {
-    const c = CARDS[id], b = buttons.cards[i];
+    const b = buttons.cards[i];
     ctx.fillStyle = PAL.k; ctx.fillRect(b.x, b.y, b.w, b.h);
-    ctx.fillStyle = '#272b3a'; ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
-    ctx.fillStyle = RARITY_COLOR[c.rarity]; ctx.fillRect(b.x + 1, b.y + 1, 3, b.h - 2);
-    const icon = cardIcon(id === 'barricade' ? 'barricade' : id);
-    if (id === 'barricade') ctx.drawImage(levelImg('wall', 2, WALL_E | WALL_W, false), b.x + 6, b.y + 3);
-    else ctx.drawImage(icon, b.x + 6, b.y + 3, 24, 24);
-    const tx = b.x + 34;
-    drawText(ctx, c.name.toUpperCase(), tx, b.y + 4, PAL.w);
-    const tag = `${c.rarity.toUpperCase()} ${c.kind.toUpperCase()}`;
-    drawText(ctx, tag, b.x + b.w - 4 - textWidth(tag), b.y + 4, RARITY_COLOR[c.rarity]);
-    drawText(ctx, c.lines[0], tx, b.y + 13, PAL.s);
-    drawText(ctx, c.lines[1] || '', tx, b.y + 20, PAL.s);
+    ctx.fillStyle = id ? '#272b3a' : PAL.t; ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+    if (!id) { drawText(ctx, 'TAKEN', b.x + Math.round((b.w - textWidth('TAKEN')) / 2), b.y + Math.round(b.h / 2) - 2, PAL.S); return; }
+    const c = CARDS[id];
+    ctx.fillStyle = RARITY_COLOR[c.rarity]; ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, 2);
+    const mid = (t) => b.x + Math.round((b.w - textWidth(t)) / 2);
+    ctx.drawImage(cardIcon(id), b.x + Math.round((b.w - 24) / 2), b.y + 5, 24, 24);
+    const name = c.name.toUpperCase();
+    drawText(ctx, name, mid(name), b.y + 31, PAL.w);
+    drawText(ctx, c.lines[0], mid(c.lines[0]), b.y + 39, PAL.s);
+    if (c.lines[1]) drawText(ctx, c.lines[1], mid(c.lines[1]), b.y + 46, PAL.s);
   });
-  drawButton(buttons.reroll, `REROLL (${run.rerolls})`, run.rerolls > 0 ? 'normal' : 'off');
-  drawButton(buttons.skip, `SKIP +${SKIP_GOLD}G`, 'normal');
+  const cost = rerollCost();
+  drawButton(buttons.reroll, cost ? `REROLL ${formatCost(cost)}` : `REROLL FREE (${run.rerolls})`, !cost || canAfford(game, cost) ? 'normal' : 'off');
+  drawButton(buttons.skip, `SKIP +${skipGold(run.wave)}G`, 'normal');
 }
-
 // The ITEMS tab sits just above the bottom bar; pulled up, the bar of item slots sits between them.
 function itemsLayout() {
   const barH = itemsOpen ? ITEM_SLOT + 8 : 0;
@@ -2635,9 +2277,21 @@ function drawInfoPanel(b, now) {
   const x = box.x + 5, y = box.y + 5;
   const def = BUILDINGS[b.type];
   const lv = b.level || 1;
-  const title = def.decor || b.type === 'tree' || def.run ? def.name.toUpperCase() : `${def.name.toUpperCase()} LV ${lv}`;
+  const title = def.decor || b.type === 'tree' || def.run || b.type === 'heropad' ? def.name.toUpperCase() : `${def.name.toUpperCase()} LV ${lv}`;
   drawText(ctx, title, x, y, PAL.w);
-  if (canStore(b)) drawButton(storeButton(b), 'PUT AWAY', b.hp >= maxHp(b) ? 'normal' : 'off');
+  // Rubble: REPAIR it for gold or CLEAR it away for free (the hero's pad heals itself).
+  if (b.hp <= 0) {
+    const fix = repairCostOf(b);
+    drawText(ctx, b.type === 'heropad' ? 'BROKEN - IT HEALS ITSELF' : fix ? `RUBBLE - FIX ${fix}G OR CLEAR IT` : 'RUBBLE - CLEAR IT AWAY', x, y + 12, PAL.R);
+    if (b.type !== 'heropad' && !buildMode) {
+      if (fix) drawButton(buttons.upgrade, `FIX ${fix}G`, phase === 'home' && game.gold >= fix ? 'good' : 'off');
+      drawButton(buttons.store, 'CLEAR', phase === 'home' ? 'normal' : 'off');
+    }
+    return;
+  }
+  const runFix = def.run && !buildMode ? repairCostOf(b) : 0; // a damaged card tower shows FIX instead of PUT AWAY
+  if (canStore(b) && !runFix) drawButton(storeButton(b), 'PUT AWAY', b.hp >= maxHp(b) ? 'normal' : 'off');
+  if (runFix) drawButton(buttons.upgrade, `FIX ${runFix}G`, phase === 'home' && game.gold >= runFix ? 'good' : 'off');
   if (buildMode) {
     drawText(ctx, b.type === 'tree' ? 'TAP GRASS TO MOVE IT THERE' : 'DRAG IT, OR TAP GRASS TO MOVE IT THERE', x, y + 12, PAL.y);
     if (canStore(b)) drawText(ctx, 'OR PUT IT AWAY IN YOUR ITEMS', x, y + 24, PAL.S);
@@ -2683,16 +2337,15 @@ function drawInfoPanel(b, now) {
   }
 }
 
-function drawShop() {
+function drawHeroPanel() {
   const m = buttons.menu;
   ctx.fillStyle = 'rgba(26,28,44,0.5)';
   ctx.fillRect(0, 0, UW, UH);
   panelBox(m);
-  const title = shopOpen === 'hero' ? `YOUR HERO - LV ${game.hero.level}` : SHOPS.find((s) => s.id === shopOpen).name;
-  drawText(ctx, title.toUpperCase(), m.x + 6, m.y + 8, PAL.y);
+  drawText(ctx, `YOUR HERO - LV ${game.hero.level}`, m.x + 6, m.y + 8, PAL.y);
   const res = `G ${game.gold}`;
   drawText(ctx, res, m.x + m.w - 6 - textWidth(res), m.y + 8, PAL.s);
-  shopItems().forEach((it, i) => {
+  heroMenu().forEach((it, i) => {
     const b = buttons.shopRows[i];
     drawText(ctx, it.title, m.x + 6, b.y + 1, PAL.w);
     drawText(ctx, it.sub, m.x + 6, b.y + 9, PAL.S);
@@ -2784,31 +2437,15 @@ function render(time, dt) {
     ...game.buildings.filter(onScreen).map((b) => ({ y: (b.r + sizeOf(b) - 1) * T, draw: () => drawBuilding(b, now) })),
     // The village: buildings, homes, stalls, lamps and gardens (pictures stand on their footprint's bottom edge),
     // the well, the keepers, and the townsfolk (indoors while a wave is on).
-    ...[...SHOPS, ...HOMES, ...PROPS].filter(onScreen).map((s) => ({ y: (s.r + s.h - 1) * T, draw: () => {
+    ...[...LANDMARKS, ...HOMES, ...PROPS].filter(onScreen).map((s) => ({ y: (s.r + s.h - 1) * T, draw: () => {
       if (hasCardArt(s.id) || BUILDINGS[s.id]?.decor) { ctx.drawImage(levelImg(s.id, 1, 0, false), s.c * T, s.r * T); return; } // the scarecrow
       const im = villageImg(s.id, s.v || 0);
       if (!FLAT_PROPS.has(s.id)) ctx.drawImage(img.shadow, s.c * T, s.r * T, s.w * T, s.h * T);
       ctx.drawImage(im, s.c * T + Math.round((s.w * T - im.width) / 2), (s.r + s.h) * T - im.height);
     } })),
     { y: WELL.r * T, draw: () => ctx.drawImage(villageImg('well'), WELL.c * T, WELL.r * T) },
-    ...SHOPKEEPERS.map((k) => ({ y: k.r * T, draw: () => person(k.look, k.c * T, k.r * T, 'down', false, 0) })),
     ...(phase === 'wave' ? [] : townsfolk.map((v) => ({ y: v.y, draw: () => person(v.look, v.x, v.y, v.dir, v.moving, v.t) }))),
-    ...(game.pets.active ? [{ y: pet.y - 0.1, draw: () => {
-      const frame = pet.moving ? Math.floor(pet.t * 8) % 2 : 0;
-      ctx.drawImage(petImg(game.pets.active, frame), Math.round(pet.x), Math.round(pet.y + 2));
-    } }] : []),
-    { y: hero.y + 0.1, draw: drawHero },
-    ...villagers.map((v) => ({ y: v.y, draw: () => {
-      if (v.down) { drawDownedFighter(v); return; }
-      person(v.look, v.x, v.y, v.dir, v.moving, v.t);
-      if (isFighter(v)) drawWeapon(v);
-      // A builder at work: a little hammer going up and down.
-      if (v.working) {
-        const up = Math.floor(v.t * 6) % 2;
-        ctx.fillStyle = PAL.N; ctx.fillRect(Math.round(v.x) + 17, Math.round(v.y) + 9 - up * 2, 1, 5);
-        ctx.fillStyle = PAL.S; ctx.fillRect(Math.round(v.x) + 16, Math.round(v.y) + 8 - up * 2, 3, 2);
-      }
-    } })),
+    ...(heroPad() ? [{ y: hero.y + 0.1, draw: drawHero }] : []),
     ...battle.monsters.map((m) => ({ y: m.y - 12 + 0.5, draw: () => drawMonster(m) })),
   ].sort((a, b) => a.y - b.y);
   for (const t of things) t.draw();
@@ -2822,7 +2459,7 @@ function render(time, dt) {
     const rr = rangeOf(selected);
     if (rr) drawRange((selected.c + sizeOf(selected) / 2) * T, selected.r * T + 6, rr);
   }
-  if ((shopOpen === 'hero' || movingHero) && !hero.down) drawRange(hero.x + T / 2, hero.y + T / 2, heroStats(game.hero.level).range * T);
+  if ((heroOpen || movingHero) && !hero.down) drawRange(hero.x + T / 2, hero.y + T / 2, heroStats(game.hero.level).range * T);
   if (offer) drawChunkOutline(offer, PAL.y);
   drawPuffs();
 
@@ -2902,11 +2539,11 @@ function render(time, dt) {
   ctx.fillStyle = PAL.k;
   ctx.fillRect(0, UH - BAR_H, UW, BAR_H);
   let hint;
-  if (movingHero) hint = 'TAP WHERE YOUR HERO SHOULD STAND GUARD';
+  if (movingHero) hint = 'TAP AN EMPTY SPOT FOR THE HERO PAD';
   else if (phase === 'wave') hint = `WAVE ${run.wave} - ${battle.remaining} ZOMBIES LEFT`;
   else if (placingItem) hint = `${isWallType(placingItem.type) ? 'TAP OR DRAG A LINE TO PLACE' : 'TAP YOUR LAND TO PLACE'} ${BUILDINGS[placingItem.type].name.toUpperCase()}${placingItem.n > 1 ? ` (${placingItem.n} LEFT)` : ''}`;
   else if (placing) hint = `TAP YOUR LAND TO PLACE A ${BUILDINGS[placing].name.toUpperCase()}`;
-  else if (phase === 'home' && !buildMode) hint = isKingWave(run.wave + 1) ? `WAVE ${run.wave + 1} IS A KING WAVE - GET READY` : `WAVE ${run.wave + 1} NEXT - BUILD, THEN START IT`;
+  else if (phase === 'home' && !buildMode) hint = wavePreview(run.wave + 1);
   else if (buildMode && selected) hint = selected.type === 'tree' ? 'TAP GRASS TO MOVE IT THERE' : 'DRAG IT, OR TAP GRASS TO MOVE IT THERE';
   else if (buildMode) hint = 'DRAG TO MOVE - DRAG ACROSS WALLS TO SELECT';
   else hint = 'TAP A BUILDING - DRAG TO LOOK AROUND';
@@ -2922,19 +2559,10 @@ function render(time, dt) {
 
   if (phase === 'home' && !run.choices && !showPanel() && !showMulti()) drawItems(); // the info panels cover it
   if (menuOpen) drawBuildMenu();
-  if (shopOpen) drawShop();
+  if (heroOpen) drawHeroPanel();
   if (lookOpen) drawLook(time);
   if (run.choices && phase === 'home') drawCardPick();
 
-  // The mayor's next goal, under the top bar (between waves).
-  const goal = nextGoal();
-  if (goal && phase === 'home') {
-    const reward = Object.entries(goal.reward).map(([k, v]) => `${v}${k === 'gems' ? ' GEMS' : RES_LETTER[k]}`).join(' ');
-    const text = `${goal.text}  +${reward}`;
-    ctx.fillStyle = 'rgba(26,28,44,0.8)';
-    ctx.fillRect(0, HUD_H, UW - 28, 11);
-    drawText(ctx, text, Math.max(4, Math.min(UW - 32 - textWidth(text), Math.round((UW - 28 - textWidth(text)) / 2))), HUD_H + 3, PAL.y);
-  }
 
   if (toast) {
     const w = textWidth(toast.text) + 12;
@@ -3056,11 +2684,13 @@ function drawTopRuns() {
   const runs = game.records.runs;
   if (!runs.length) centeredText('DIE ONCE AND YOUR RUN SHOWS UP HERE', m.y + 40, PAL.s);
   runs.forEach((r, i) => {
+    // Waves survived (the score), zombies killed, gold earned and the run's omen.
     const y = m.y + 22 + i * 13;
-    const d = new Date(r.at);
     drawText(ctx, `${i + 1}.`, m.x + 6, y, i === 0 ? PAL.y : PAL.s);
-    drawText(ctx, `WAVE ${r.waves}`, m.x + 26, y, PAL.w);
-    drawText(ctx, `${r.kills} KILLS HERO${r.hero}  ${d.getMonth() + 1}/${d.getDate()}`, m.x + 70, y, PAL.s);
+    drawText(ctx, `WAVE ${r.waves}`, m.x + 20, y, PAL.w);
+    drawText(ctx, `${r.kills}K ${r.gold ?? 0}G`, m.x + 62, y, PAL.y);
+    const omen = (r.omen || '').toUpperCase();
+    drawText(ctx, omen, m.x + m.w - 6 - textWidth(omen), y, PAL.s);
   });
   drawButton(buttons.menuClose);
 }
@@ -3074,19 +2704,20 @@ window.defense = {
   get phase() { return phase; },
   get run() { return run; },
   get hero() { return hero; },
+  heroPad,
+  moveHeroPad,
+  upgradeHero,
+  get heroOpen() { return heroOpen; },
   get selected() { return selected; },
+  select: (b) => { selected = b; },
+  clearRubble,
+  repairOne,
   battle,
-  get villagers() { return villagers; },
-  get shopOpen() { return shopOpen; },
   get buildMode() { return buildMode; },
   setBuildMode: (on) => { if (phase === 'home') { buildMode = on; selected = null; placing = null; } },
-  shopItems,
-  closeShop: () => { shopOpen = null; },
-  openShop,
   get lookOpen() { return lookOpen; },
-  hireNpc, hireApplicant, rerollApplicants, rollApplicants,
   openLook: () => { lookOpen = true; },
-  SHOPS,
+  LANDMARKS,
   cam,
   worldToScreen,
   chunkCenterOnScreen: (cx, cy) => worldToScreen((cx + 0.5) * CHUNK * T, (cy + 0.5) * CHUNK * T),
@@ -3133,14 +2764,12 @@ window.defense = {
 };
 
 // Advance the game by dt seconds (at most 0.05 at a time, so nothing skips past anything).
-// One step of everything that moves: the battle, your people, the hero and the pet.
+// One step of everything that moves: the battle, the hero (and their pad healing) and the townsfolk.
 function simulate(dt) {
   if (phase === 'wave') battle.update(dt);
-  if (villagers.length !== game.npcs.length || villagers.some((v, i) => v.npc !== game.npcs[i])) syncNpcBodies();
-  for (const v of villagers) npcThink(v, dt);
+  healPad(dt);
   heroThink(dt);
-  for (const v of [hero, ...villagers, ...(phase === 'wave' ? [] : townsfolk)]) updateVillager(v, dt);
-  updatePet(dt);
+  if (phase !== 'wave') for (const v of townsfolk) updateTownsfolk(v, dt);
 }
 
 // Is the wave in a quiet stretch (every zombie still far up the path, nothing being hit)? Then it can run at
@@ -3164,7 +2793,6 @@ function tick(dt) {
     if (battle.cleared) { waveCleared(); break; }
   }
   panKeys();
-  checkGoals(dt);
   clampCam(); // the camera always stays inside the map
   if (toast && (toast.time -= dt) <= 0) toast = null;
   puffs = puffs.filter((p) => (p.t += dt) < 0.5);

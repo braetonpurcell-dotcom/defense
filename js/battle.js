@@ -1,8 +1,10 @@
 // A wave in progress: monsters, towers shooting, traps, run-card effects.
 //
-// Monsters follow a "flow field": every walkable tile knows how costly it is to reach the village
-// (or a Scarecrow decoy) from there. Open ground costs 1 per tile; a tile with a building costs more
-// the more health it has, so monsters walk around walls when there's a way and smash through when there isn't.
+// Zombies hunt your towers. They follow a "flow field": every walkable tile knows how costly it is to reach the
+// nearest target from there. Targets are every standing tower, card tower, the hero's pad, a Gold Mine and a
+// Scarecrow; only when none is left standing is the village entrance the target. Open ground costs 1 per tile;
+// a tile with a wall costs more the more health it has, so zombies walk around walls when there's a way and
+// smash through when there isn't (walls are never targets themselves: Clash of Clans style).
 // Traps are walkable: monsters step on them.
 
 import {
@@ -49,12 +51,16 @@ function makeHeap() {
 }
 
 const isTrap = (b) => !!BUILDINGS[b.type].trap;
-const isGoal = (b) => !!CARDS[b.type]?.decoy; // a Scarecrow draws them in (the village is the other goal)
+// What zombies hunt: towers (archer and card towers), the hero's pad, a Gold Mine and the Scarecrow decoy.
+export const isTarget = (b) => b.type === 'tower' || b.type === 'heropad' || CARDS[b.type]?.kind === 'tower'
+  || CARDS[b.type]?.kind === 'mine' || !!CARDS[b.type]?.decoy;
+const isWallish = (b) => b.type === 'wall' || b.type === 'barricade';
+// Wall-breakers care this much (of a normal zombie) about a wall in the way: they walk straight through.
+const BREAKER_WALL_COST = 0.08;
 const tileCenter = (c, r) => ({ x: c * T + T / 2, y: r * T + T / 2 });
 
 export class Battle {
   // world: { buildings(), goals() -> [{c, r}] (the village entrance), walkable(c, r), cave() -> {c, r},
-  //          fighters() -> bodies zombies can fight, hitFighter(body, damage),
   //          onKill(monster), onDestroyed(building), onBreakthrough(monster),
   //          maxHp(building), run() -> { blessings, omen } }
   constructor(world) {
@@ -77,7 +83,6 @@ export class Battle {
     this.cooldown = new WeakMap(); // tower -> seconds until next shot
     this.flash = new WeakMap();    // building -> seconds of white hit flash
     this.flowDirty = false;
-    this.fighterList = [];
   }
 
   // The wave is over (cleared): nothing left to fight, no hit flashes left lit.
@@ -116,26 +121,41 @@ export class Battle {
     }
     this.bmap = bmap;
     this.traps = this.w.buildings().filter((b) => isTrap(b) && b.hp > 0);
+    // The targets: every standing tower, pad, mine and decoy. With none left, the village entrance.
+    const sources = [];
+    for (const b of this.w.buildings()) {
+      if (!isTarget(b) || b.hp <= 0) continue;
+      const s = sizeOf(b);
+      for (let r = b.r; r < b.r + s; r++) for (let c = b.c; c < b.c + s; c++) sources.push(r * N + c);
+    }
+    this.goalSet = new Set(this.w.goals().map((g) => g.r * N + g.c));
+    this.huntingVillage = !sources.length;
+    if (this.huntingVillage) sources.push(...this.goalSet);
 
-    const dist = this.distBuf ||= new Float32Array(N * NR); // N wide × NR tall, index r * N + c
-    dist.fill(Infinity);
-    // Cost of stepping onto tile i: 1, plus the effort of smashing whatever stands there.
+    // Cost of stepping onto tile i: 1, plus the effort of smashing whatever stands there (a target costs
+    // nothing extra: it's what they came for).
     const enterCost = (i) => {
       const b = bmap.get(i);
-      return b && !isGoal(b) ? 1 + b.hp * DETOUR_PER_HP : 1;
+      return b && !isTarget(b) ? 1 + b.hp * DETOUR_PER_HP : 1;
     };
     this.enterCost = enterCost;
-    // The village entrance (and any Scarecrow) is a goal.
-    const heap = makeHeap();
-    this.goalSet = new Set();
-    for (const g of this.w.goals()) { const i = g.r * N + g.c; dist[i] = 0; heap.push(0, i); this.goalSet.add(i); }
-    for (const b of this.w.buildings()) {
-      if (!isGoal(b) || b.hp <= 0) continue;
-      const s = sizeOf(b);
-      for (let r = b.r; r < b.r + s; r++) {
-        for (let c = b.c; c < b.c + s; c++) { dist[r * N + c] = 0; heap.push(0, r * N + c); }
-      }
+    this.dist = this.flood(this.distBuf ||= new Float32Array(N * NR), sources, enterCost);
+    // Wall-breakers get their own field, where walls barely count.
+    if (this.wave >= MONSTERS.breaker.debut) {
+      const breakerCost = (i) => {
+        const b = bmap.get(i);
+        return b && !isTarget(b) ? 1 + b.hp * DETOUR_PER_HP * (isWallish(b) ? BREAKER_WALL_COST : 1) : 1;
+      };
+      this.breakerCost = breakerCost;
+      this.distBreaker = this.flood(this.distBreakerBuf ||= new Float32Array(N * NR), sources, breakerCost);
     }
+  }
+
+  // Dijkstra out from the source tiles over walkable ground (N wide × NR tall, index r * N + c).
+  flood(dist, sources, enterCost) {
+    dist.fill(Infinity);
+    const heap = makeHeap();
+    for (const i of sources) { dist[i] = 0; heap.push(0, i); }
     while (heap.size) {
       const [d, i] = heap.pop();
       if (d > dist[i]) continue;
@@ -148,7 +168,7 @@ export class Battle {
         if (nd < dist[j]) { dist[j] = nd; heap.push(nd, j); }
       }
     }
-    this.dist = dist;
+    return dist;
   }
 
   update(dt) {
@@ -162,13 +182,12 @@ export class Battle {
         this.spawnClock = s.gap;
       }
     }
-    this.fighterList = this.w.fighters?.() || [];
     for (const m of this.monsters) this.updateMonster(m, dt);
     this.updateTowers(dt);
     this.updateShots(dt);
     this.effects = this.effects.filter((e) => (e.t += dt) < e.life);
     this.monsters = this.monsters.filter((m) => !m.dead);
-    // A building fell (or a builder put one back) this update: the routes change once, at the end.
+    // A building fell (or the hero's pad moved) this update: the routes change once, at the end.
     if (this.flowDirty) { this.flowDirty = false; this.recomputeFlow(); }
   }
 
@@ -186,15 +205,17 @@ export class Battle {
     });
   }
 
-  // Step to the neighbouring tile that's the cheapest way to a goal, counting the effort of
+  // Step to the neighbouring tile that's the cheapest way to a target, counting the effort of
   // smashing anything standing there (random pick among equally good ones).
   pickNext(m) {
+    const breaker = m.def.breaker && this.distBreaker;
+    const dist = breaker ? this.distBreaker : this.dist, cost = breaker ? this.breakerCost : this.enterCost;
     let best = Infinity;
     let options = [];
     for (const [dc, dr] of DIRS) {
       const c = m.c + dc, r = m.r + dr;
       if (c < 0 || r < 0 || c >= N || r >= NR) continue;
-      const d = this.dist[r * N + c] + this.enterCost(r * N + c);
+      const d = dist[r * N + c] + cost(r * N + c);
       if (d < best - 1e-4) { best = d; options = [{ c, r }]; } else if (Math.abs(d - best) <= 1e-4) options.push({ c, r });
     }
     return best < Infinity ? options[Math.floor(Math.random() * options.length)] : null;
@@ -223,14 +244,6 @@ export class Battle {
     }
     m.attacking = null;
     if (m.stun > 0) return;
-    // A fighter standing in the way gets fought first (fighter x/y is the top-left of their tile).
-    const foe = this.fighterList.find((f) => !f.down && Math.hypot(f.x + T / 2 - m.x, f.y + T / 2 - m.y) < 15);
-    if (foe) {
-      m.attacking = foe;
-      m.atk -= dt;
-      if (m.atk <= 0) { m.atk = m.def.rate; this.w.hitFighter(foe, m.damage); }
-      return;
-    }
     if (!m.next) {
       m.next = this.pickNext(m);
       if (!m.next) return;
@@ -241,7 +254,7 @@ export class Battle {
       m.atk -= dt;
       if (m.atk <= 0) {
         m.atk = m.def.rate;
-        this.hitBuilding(b, m.damage);
+        this.hitBuilding(b, m.damage * (isWallish(b) ? m.def.wallMul || 1 : 1));
       }
       return;
     }

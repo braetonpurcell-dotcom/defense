@@ -1,7 +1,7 @@
 # Defense
 
-A phone game: you're the last line of defense between the zombies' den and a village. Zombies walk the path
-down through your land; you buy plots, lay walls, build archer towers, hire people and move your hero. Waves
+A phone game: you're the last line of defense between the zombies' den and a village. Zombies come down the path
+and hunt your towers; you buy plots, lay walls, build archer towers, take run cards and move your hero. Waves
 go on forever and get harder. If one zombie gets into the village, the run is over and your save is wiped;
 the run goes into TOP RUNS. Game Boy Color-style pixel art, all drawn in code.
 
@@ -29,7 +29,7 @@ Keep its window open while you play; close it when you're done.
 | Preview a level in the game | in the browser console: `defense.setLevel('tower', 7)` or `defense.setLevel('wall', 7)` |
 
 ## Code
-- `js/config.js`: all the game numbers (health, damage, prices, cards, omens, traits, goals, what each wave sends)
+- `js/config.js`: all the game numbers (health, damage, prices, cards, omens, the hero, what each wave sends)
 - `js/main.js`: the valley, the village, saving, your people, the hero, items, the UI and the game loop
 - `js/battle.js`: a wave in progress: zombies, flow-field pathfinding, towers, shots, traps
 - `js/economy.js`: gold, building and upgrading

@@ -29,6 +29,10 @@ export const PAL = {
 export const PAL_RUNNER = { ...PAL, u: '#b13e53', U: '#5d275d', a: '#a3b88c' };            // red shirt, paler
 export const PAL_BRUTE = { ...PAL, u: '#566c86', U: '#333c57', a: '#7a8a6a', A: '#4a5a40' }; // grey, heavier
 export const PAL_KING = { ...PAL, u: '#7a2f8f', U: '#2a1530', a: '#6e8f60', k: '#1a1c2c' };  // royal purple
+// The late-game types (each also gets something of its own in main.js drawMonster: the breaker's hammer).
+export const PAL_BREAKER = { ...PAL, u: '#ef7d57', U: '#8b4a2b', a: '#8fa070', A: '#5a6a48' }; // orange overalls
+export const PAL_SWARM = { ...PAL, u: '#ffcd75', U: '#a07a30', a: '#c0d0a0', A: '#8a9a70' };   // pale and yellow
+export const PAL_TANK = { ...PAL, u: '#257179', U: '#123a40', a: '#5a7a50', A: '#3a5030' };    // dark teal, huge
 
 // Every coloured pixel turned white, for the hit flash.
 export const PAL_FLASH = Object.fromEntries(Object.keys(PAL).map((k) => [k, k === 'x' ? 'rgba(0,0,0,0)' : '#ffffff']));

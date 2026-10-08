@@ -1,4 +1,4 @@
-// The village to the south: shop buildings, the well, and pets. Drawn in code.
+// The village to the south (scenery: the thing you protect): its buildings, cottages, the well and props. Drawn in code.
 
 import { painter, blocks } from './paint.js';
 
@@ -77,22 +77,6 @@ function cottage(p, v = 0) {
   p.rect(10, 30, 16, 35, 'y'); p.frame(9, 29, 17, 36); p.vline(13, 30, 35, 'k');             // windows
   p.rect(31, 30, 37, 35, 'y'); p.frame(30, 29, 38, 36); p.vline(34, 30, 35, 'k');
   p.rect(9, 37, 17, 38, v % 2 ? 'R' : 'l'); p.rect(30, 37, 38, 38, v % 2 ? 'l' : 'R');       // window boxes
-}
-
-// Blacksmith (48×48): stone forge, glowing furnace, anvil out front.
-function blacksmith(p) {
-  blocks(p, 5, 22, 42, 44, 's', 'S', 8, 5);
-  p.frame(4, 21, 43, 45);
-  for (let y = 6; y <= 21; y++) {
-    const hw = 3 + (y - 6) * 1.35;
-    for (let x = Math.round(23.5 - hw); x <= Math.round(23.5 + hw); x++) p.put(x, y, (y - 6) % 4 === 3 ? 'S' : 't');
-  }
-  p.hline(1, 46, 21, 'k');
-  p.rect(33, 2, 39, 14, 'S'); p.frame(32, 1, 40, 14); p.rect(34, 0, 38, 1, 'R');           // chimney with fire
-  p.rect(8, 28, 22, 40, 'k'); p.rect(10, 31, 20, 40, 'R'); p.rect(12, 34, 18, 40, 'y');      // forge mouth
-  p.rect(27, 30, 38, 44, 'N'); p.frame(26, 29, 39, 45); p.put(36, 37, 'y');                  // door
-  p.rect(2, 41, 11, 43, 'E'); p.rect(4, 44, 9, 46, 'E'); p.rect(0, 41, 2, 42, 'E');          // anvil
-  p.vline(23, 10, 17, 'N'); p.rect(19, 9, 27, 11, 'e');                                      // hammer sign
 }
 
 // Chapel (48×72, stands on 2×2 tiles): white walls, a bell tower and a round window.
@@ -274,7 +258,7 @@ function boat(p) {
 // bottom edge of their footprint, centred, so tall ones overhang the tile behind.
 export const VILLAGE_ART = {
   petshop: [petshop, 48, 48], store: [store, 48, 48], tavern: [tavern, 48, 48],
-  blacksmith: [blacksmith, 48, 48], chapel: [chapel, 48, 72], townhall: [townhall, 72, 72],
+  chapel: [chapel, 48, 72], townhall: [townhall, 72, 72],
   cottage: [cottage, 48, 48], stall: [stall, 48, 36], lamp: [lamp, 24, 36],
   fence: [fence, 24, 24], flowerbed: [flowerbed, 24, 24], bench: [bench, 24, 16], cart: [cart, 48, 36],
   hay: [hay, 24, 24], signpost: [signpost, 24, 36], crates: [crates, 24, 24], barrel: [barrel, 24, 24],
@@ -298,33 +282,3 @@ export function wellRows() {
   return p.rows();
 }
 
-// ---------- Pets (24×24, two frames) ----------
-
-function dog(p, f) {
-  p.rect(6, 12, 17, 17, 'h'); p.rect(14, 8, 20, 13, 'h'); p.rect(15, 6, 16, 8, 'n');
-  p.put(18, 10, 'k'); p.put(20, 11, 'k'); p.rect(4, 10 - f, 6, 12, 'h');
-  for (const x of [7, 10, 13, 16]) p.rect(x, 18, x + 1, 20 - ((x + f) % 2), 'h');
-  p.put(9, 14, 'n'); p.put(12, 15, 'n');
-}
-function cat(p, f) {
-  p.rect(7, 12, 16, 17, 'S'); p.rect(14, 8, 19, 13, 'S'); p.put(14, 7, 'S'); p.put(19, 7, 'S');
-  p.put(16, 10, 'l'); p.put(18, 10, 'l'); p.put(17, 12, 'R');
-  for (let i = 0; i < 6; i++) p.put(6 - Math.round(i * 0.3), 13 - i - f, 'S');
-  for (const x of [8, 11, 13, 15]) p.rect(x, 18, x, 20 - ((x + f) % 2), 'S');
-}
-function owl(p, f) {
-  p.disc(12, 13, 6, 'n'); p.disc(12, 15, 4, 'h');
-  p.disc(10, 11, 2.2, 'w'); p.disc(14, 11, 2.2, 'w'); p.put(10, 11, 'k'); p.put(14, 11, 'k'); p.put(12, 13, 'y');
-  p.put(8, 6, 'n'); p.put(16, 6, 'n');
-  p.rect(5 - f, 12, 6, 16, 'N'); p.rect(18, 12, 19 + f, 16, 'N');
-  p.put(10, 19, 'y'); p.put(14, 19, 'y');
-}
-
-export const PET_ART = { dog, cat, owl };
-
-export function petRows(type, frame) {
-  const p = painter(24, 24);
-  PET_ART[type](p, frame);
-  p.outline();
-  return p.rows();
-}
